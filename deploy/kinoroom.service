@@ -1,0 +1,21 @@
+# systemd-сервис: автозапуск KinoRoom при включении малинки и перезапуск при сбое.
+# Замените pi на своё имя пользователя и путь — на папку с проектом.
+#   sudo cp deploy/kinoroom.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now kinoroom
+
+[Unit]
+Description=KinoRoom — совместный просмотр
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/kinoroom
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=3
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

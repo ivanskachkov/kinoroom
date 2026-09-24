@@ -1,0 +1,2 @@
+# Проект запускается на Linux (Raspberry Pi): всегда LF, даже при checkout на Windows.
+* text=auto eol=lf

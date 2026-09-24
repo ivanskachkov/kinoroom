@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0c10">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Комната · KinoRoom</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="room-page">
+  <header class="topbar">
+    <a class="logo" href="/" aria-label="KinoRoom — на главную">
+      <span class="logo-mark"><i data-icon="play" data-size="16"></i></span>
+      <span class="logo-text">Kino<b>Room</b></span>
+    </a>
+
+    <form id="search-form" class="search" role="search">
+      <i data-icon="search" data-size="18"></i>
+      <input id="search-input" class="input" type="search" placeholder="Фильм, видео или ссылка…" autocomplete="off" enterkeyhint="search" aria-label="Поиск">
+    </form>
+
+    <div class="room-meta">
+      <div id="members-wrap" class="members-wrap" title="Участники" role="button" tabindex="0">
+        <div id="members" class="members"></div>
+        <span class="members-count"><i data-icon="users" data-size="16"></i><span id="members-count">0</span></span>
+      </div>
+      <button id="copy-link" class="btn btn-ghost" type="button" title="Скопировать ссылку на комнату">
+        <i data-icon="link" data-size="16"></i><span id="room-code" class="room-code"></span>
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="stage">
+      <div id="player" class="player is-paused">
+        <div id="yt-host" class="player-media" hidden></div>
+        <video id="video" class="player-media" playsinline hidden></video>
+
+        <div id="player-empty" class="player-empty">
+          <span class="empty-icon"><i data-icon="film" data-size="36"></i></span>
+          <h2>Ничего не играет</h2>
+          <p>Найдите фильм или видео — или вставьте ссылку на YouTube, Internet Archive или .mp4 в строку поиска.</p>
+          <button id="empty-search" class="btn btn-primary" type="button"><i data-icon="search" data-size="16"></i>Найти, что посмотреть</button>
+        </div>
+
+        <div id="click-layer" class="click-layer"></div>
+        <div id="reactions-layer" class="reactions-layer" aria-hidden="true"></div>
+        <div id="connection" class="connection" hidden>Нет связи с сервером — переподключаемся…</div>
+        <div id="player-notice" class="player-notice" hidden></div>
+
+        <div class="controls">
+          <input id="seek" class="range seek" type="range" min="0" max="1" step="0.1" value="0" aria-label="Перемотка" disabled>
+          <div class="controls-row">
+            <button id="btn-play" class="icon-btn" type="button" aria-label="Смотреть"></button>
+            <button id="btn-next" class="icon-btn" type="button" aria-label="Следующее в очереди" title="Следующее в очереди" hidden><i data-icon="next" data-size="22"></i></button>
+            <button id="btn-mute" class="icon-btn" type="button" aria-label="Звук"></button>
+            <input id="volume" class="range volume" type="range" min="0" max="1" step="0.05" aria-label="Громкость">
+            <span id="time" class="time"></span>
+            <span class="spacer"></span>
+            <span id="sync" class="sync" data-state="idle"><span id="sync-label" class="sync-label"></span></span>
+            <button id="btn-fullscreen" class="icon-btn" type="button" aria-label="Полный экран" title="Полный экран (F)"><i data-icon="fullscreen" data-size="20"></i></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="now-bar">
+        <div class="now-info">
+          <div id="now-title" class="now-title">Ничего не играет</div>
+          <div id="now-sub" class="now-sub"></div>
+        </div>
+        <div class="reactions" aria-label="Реакции">
+          <button id="mic-quick" class="reaction-btn mic-btn" type="button" aria-label="Включить микрофон" title="Включить микрофон"><i data-icon="mic" data-size="20"></i></button>
+          <button class="reaction-btn" type="button" data-reaction="😂" aria-label="Смешно">😂</button>
+          <button class="reaction-btn" type="button" data-reaction="😮" aria-label="Ого">😮</button>
+          <button class="reaction-btn" type="button" data-reaction="😍" aria-label="Любовь">😍</button>
+          <button class="reaction-btn" type="button" data-reaction="🔥" aria-label="Огонь">🔥</button>
+          <button class="reaction-btn" type="button" data-reaction="😢" aria-label="Грустно">😢</button>
+          <button class="reaction-btn" type="button" data-reaction="👏" aria-label="Аплодисменты">👏</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="side">
+      <div class="tabs" role="tablist">
+        <button class="tab" type="button" role="tab" data-tab="chat" aria-selected="true"><i data-icon="chat" data-size="18"></i>Чат<span id="chat-badge" class="tab-badge"></span></button>
+        <button class="tab" type="button" role="tab" data-tab="queue" aria-selected="false"><i data-icon="queue" data-size="18"></i>Очередь<span id="queue-badge" class="tab-badge tab-badge-muted"></span></button>
+        <button class="tab" type="button" role="tab" data-tab="people" aria-selected="false"><i data-icon="users" data-size="18"></i>Люди<span id="people-badge" class="tab-badge tab-badge-muted"></span></button>
+      </div>
+      <div id="panel-chat" class="panel" role="tabpanel">
+        <ul id="chat-list" class="chat-list" aria-live="polite"></ul>
+        <form id="chat-form" class="chat-form">
+          <input id="chat-input" class="input" placeholder="Сообщение…" maxlength="500" autocomplete="off" enterkeyhint="send" aria-label="Сообщение">
+          <button class="icon-btn icon-btn-accent" type="submit" aria-label="Отправить"><i data-icon="send" data-size="20"></i></button>
+        </form>
+      </div>
+      <div id="panel-queue" class="panel" role="tabpanel" hidden>
+        <ul id="queue-list" class="queue-list"></ul>
+      </div>
+      <div id="panel-people" class="panel" role="tabpanel" hidden>
+        <div class="voice-box">
+          <div class="voice-head">
+            <h3>Голосовой чат</h3>
+            <span id="voice-status" class="voice-status"></span>
+          </div>
+          <button id="mic-toggle" class="btn btn-primary mic-toggle" type="button"></button>
+          <div id="mic-meter" class="mic-meter" hidden><span id="mic-meter-fill"></span></div>
+          <p id="voice-hint" class="voice-hint">Слушать может каждый, микрофон нужен только тому, кто говорит. Лучше в наушниках — иначе микрофон подхватит звук фильма.</p>
+          <button id="voice-unlock" class="btn btn-ghost btn-sm" type="button" hidden><i data-icon="volume" data-size="16"></i>Включить звук голосов</button>
+          <label class="voice-row">
+            <span>Громкость голосов</span>
+            <input id="voice-volume" class="range" type="range" min="0" max="1" step="0.05" aria-label="Громкость голосов">
+          </label>
+          <label class="voice-row voice-check">
+            <input id="voice-duck" type="checkbox">
+            <span>Приглушать фильм, пока кто-то говорит</span>
+          </label>
+        </div>
+        <ul id="people-list" class="people-list"></ul>
+      </div>
+    </aside>
+
+    <section id="search-panel" class="search-panel" hidden aria-label="Результаты поиска">
+      <div class="search-head">
+        <h2 id="search-title">Поиск</h2>
+        <button id="search-close" class="icon-btn" type="button" aria-label="Закрыть поиск" title="Закрыть (Esc)"><i data-icon="close"></i></button>
+      </div>
+      <div id="search-body" class="search-body"></div>
+    </section>
+  </main>
+
+  <div id="join" class="modal" hidden>
+    <form id="join-form" class="modal-card">
+      <span class="logo-mark logo-mark-lg"><i data-icon="play" data-size="22"></i></span>
+      <h2>Вход в комнату</h2>
+      <p class="muted">Как вас будут видеть другие участники?</p>
+      <input id="join-name" class="input" maxlength="24" placeholder="Ваше имя" autocomplete="nickname" required>
+      <p id="join-error" class="error-text"></p>
+      <button class="btn btn-primary btn-lg" type="submit">Войти</button>
+    </form>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/js/room.js"></script>
+</body>
+</html>
