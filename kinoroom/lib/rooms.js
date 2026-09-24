@@ -1,0 +1,310 @@
+import crypto from 'node:crypto';
+
+const ROOM_ID = /^[A-Z0-9]{4,12}$/;
+const COLORS = ['#ff7a59', '#f5b942', '#3ecf8e', '#4ab3ff', '#b18cff', '#ff7eb6', '#5ee0d6', '#c3e35b'];
+const REACTIONS = new Set(['😂', '😮', '😍', '👍', '🔥', '😢', '👏', '💀']);
+const SOURCES = new Set(['youtube', 'archive', 'link', 'library', 'tmdb']);
+const LIMITS = { name: 24, chat: 500, title: 200, queue: 200, history: 100, members: 50, rooms: 500 };
+const LEAVE_GRACE_MS = 8_000; // перезагрузка страницы не должна спамить «вышел/зашёл»
+const EMPTY_ROOM_TTL_MS = 60 * 60 * 1000;
+const MAX_POSITION = 7 * 24 * 60 * 60;
+
+function cleanText(value, max) {
+  return String(value ?? '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
+function safeUrl(value, { allowLibrary = false } = {}) {
+  if (typeof value !== 'string' || value.length > 2000) return null;
+  if (allowLibrary && value.startsWith('/media/')) return value;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeMedia(input, libraryEnabled) {
+  if (!input || typeof input !== 'object') return null;
+  const title = cleanText(input.title, LIMITS.title) || 'Без названия';
+  const source = SOURCES.has(input.source) ? input.source : 'link';
+  const duration = Number.isFinite(input.duration) && input.duration > 0 ? input.duration : null;
+
+  if (input.kind === 'youtube') {
+    if (typeof input.id !== 'string' || !/^[\w-]{11}$/.test(input.id)) return null;
+    const thumb = safeUrl(input.thumb) ?? `https://i.ytimg.com/vi/${input.id}/mqdefault.jpg`;
+    return { kind: 'youtube', id: input.id, title, thumb, source, duration };
+  }
+  if (input.kind === 'file') {
+    const url = safeUrl(input.url, { allowLibrary: libraryEnabled });
+    if (!url) return null;
+    return { kind: 'file', url, title, thumb: safeUrl(input.thumb), source, duration };
+  }
+  return null;
+}
+
+function readPosition(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 && n <= MAX_POSITION ? n : null;
+}
+
+function formatTime(seconds) {
+  const s = Math.floor(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+}
+
+function currentPosition(room) {
+  const { playing, position, updatedAt } = room.playback;
+  return playing ? position + (Date.now() - updatedAt) / 1000 : position;
+}
+
+function rateLimiter() {
+  const hits = new Map();
+  return (key, max, windowMs) => {
+    const now = Date.now();
+    const recent = (hits.get(key) ?? []).filter((t) => now - t < windowMs);
+    const allowed = recent.length < max;
+    if (allowed) recent.push(now);
+    hits.set(key, recent);
+    return allowed;
+  };
+}
+
+const publicMember = ({ id, name, color }) => ({ id, name, color });
+
+/**
+ * Состояние воспроизведения хранится на сервере как «позиция в момент времени»:
+ * { playing, position, updatedAt }. Клиенты сами досчитывают текущую позицию
+ * по своим часам, скорректированным по серверу, поэтому сервер не шлёт тики.
+ */
+export function attachRooms(io, { libraryEnabled }) {
+  const rooms = new Map();
+
+  setInterval(() => {
+    for (const [id, room] of rooms) {
+      if (room.members.size === 0 && Date.now() - room.emptySince > EMPTY_ROOM_TTL_MS) rooms.delete(id);
+    }
+  }, 60_000).unref();
+
+  function createRoom(id) {
+    if (rooms.size >= LIMITS.rooms) return null;
+    const room = {
+      id,
+      media: null,
+      playback: { playing: false, position: 0, updatedAt: Date.now() },
+      queue: [],
+      members: new Map(),
+      chat: [],
+      emptySince: Date.now(),
+    };
+    rooms.set(id, room);
+    return room;
+  }
+
+  function snapshot(room) {
+    return {
+      id: room.id,
+      media: room.media,
+      playback: room.playback,
+      queue: room.queue,
+      members: [...room.members.values()].map(publicMember),
+      chat: room.chat,
+    };
+  }
+
+  function pickColor(room) {
+    const used = new Set([...room.members.values()].map((m) => m.color));
+    return COLORS.find((c) => !used.has(c)) ?? COLORS[room.members.size % COLORS.length];
+  }
+
+  function pushChat(room, message) {
+    room.chat.push(message);
+    if (room.chat.length > LIMITS.history) room.chat.shift();
+    io.to(room.id).emit('chat', message);
+  }
+
+  function system(room, text) {
+    pushChat(room, { id: crypto.randomUUID(), type: 'system', text, ts: Date.now() });
+  }
+
+  const emitMembers = (room) => io.to(room.id).emit('members', [...room.members.values()].map(publicMember));
+  const emitQueue = (room) => io.to(room.id).emit('queue', room.queue);
+
+  function startMedia(room, media, byName) {
+    room.media = { ...media, mid: crypto.randomUUID() };
+    room.playback = { playing: true, position: 0, updatedAt: Date.now() };
+    io.to(room.id).emit('media', { media: room.media, playback: room.playback });
+    system(room, byName ? `${byName} включает «${media.title}»` : `Дальше по очереди: «${media.title}»`);
+  }
+
+  function playNextOrStop(room) {
+    const next = room.queue.shift();
+    if (next) {
+      emitQueue(room);
+      startMedia(room, next, null);
+      return;
+    }
+    room.playback = { playing: false, position: currentPosition(room), updatedAt: Date.now() };
+    io.to(room.id).emit('playback', { ...room.playback, action: 'ended' });
+  }
+
+  io.on('connection', (socket) => {
+    const allow = rateLimiter();
+    let room = null;
+    let member = null;
+
+    // Обработчик вызывается только после успешного входа в комнату.
+    const inRoom = (handler) => (...args) => {
+      if (room && member) handler(...args);
+    };
+
+    socket.on('time:ping', (ack) => {
+      if (typeof ack === 'function') ack(Date.now());
+    });
+
+    socket.on('room:join', (data, ack) => {
+      if (typeof ack !== 'function') return;
+      if (room) return ack({ error: 'Вы уже в комнате' });
+
+      const id = String(data?.roomId ?? '').toUpperCase();
+      if (!ROOM_ID.test(id)) return ack({ error: 'Неверный код комнаты' });
+      const name = cleanText(data?.name, LIMITS.name);
+      if (!name) return ack({ error: 'Введите имя' });
+      const clientId = typeof data?.clientId === 'string' && /^[\w-]{8,64}$/.test(data.clientId) ? data.clientId : crypto.randomUUID();
+
+      const target = rooms.get(id) ?? createRoom(id);
+      if (!target) return ack({ error: 'Сервер переполнен, попробуйте позже' });
+
+      let existing = target.members.get(clientId);
+      const returning = Boolean(existing);
+      if (!existing) {
+        if (target.members.size >= LIMITS.members) return ack({ error: 'Комната заполнена' });
+        existing = { id: clientId, name, color: pickColor(target), sockets: 0, leaveTimer: null };
+        target.members.set(clientId, existing);
+      }
+      clearTimeout(existing.leaveTimer);
+      existing.leaveTimer = null;
+      existing.sockets += 1;
+      existing.name = name;
+      target.emptySince = null;
+
+      room = target;
+      member = existing;
+      socket.join(id);
+      ack({ ok: true, you: publicMember(member), state: snapshot(room) });
+      emitMembers(room);
+      if (!returning) system(room, `${name} заходит в комнату`);
+    });
+
+    socket.on('player:control', inRoom((data) => {
+      if (!room.media || !allow('control', 20, 5_000)) return;
+      const action = data?.action;
+      if (!['play', 'pause', 'seek'].includes(action)) return;
+      const position = readPosition(data?.position);
+      if (position === null) return;
+
+      // Клиент присылает момент действия по часам сервера — так компенсируется задержка сети.
+      const now = Date.now();
+      const at = Number(data?.at);
+      const updatedAt = Number.isFinite(at) && at >= now - 5_000 && at <= now + 1_000 ? Math.min(at, now) : now;
+      const playing = action === 'play' ? true : action === 'pause' ? false : room.playback.playing;
+      room.playback = { playing, position, updatedAt };
+      io.to(room.id).emit('playback', { ...room.playback, action, by: member.id });
+
+      if (action === 'pause') system(room, `${member.name} ставит на паузу · ${formatTime(position)}`);
+      else if (action === 'play') system(room, `${member.name} продолжает просмотр`);
+      else system(room, `${member.name} перематывает на ${formatTime(position)}`);
+    }));
+
+    socket.on('player:ended', inRoom((data) => {
+      // Конец видео присылают все клиенты — реагируем только на первое сообщение про текущее видео.
+      if (!room.media || data?.mid !== room.media.mid || !room.playback.playing) return;
+      playNextOrStop(room);
+    }));
+
+    socket.on('media:play', inRoom((data) => {
+      if (!allow('media', 10, 10_000)) return;
+      const media = sanitizeMedia(data, libraryEnabled);
+      if (media) startMedia(room, { ...media, addedBy: member.name }, member.name);
+    }));
+
+    socket.on('queue:add', inRoom((data) => {
+      if (!allow('queue', 20, 10_000)) return;
+      const items = (Array.isArray(data?.items) ? data.items : [data])
+        .slice(0, 100)
+        .map((item) => sanitizeMedia(item, libraryEnabled))
+        .filter(Boolean);
+      if (!items.length) return;
+
+      // Если ничего не играет — первое добавленное сразу запускается.
+      if (!room.media) startMedia(room, { ...items.shift(), addedBy: member.name }, member.name);
+      const free = LIMITS.queue - room.queue.length;
+      const added = items.slice(0, Math.max(0, free)).map((item) => ({ ...item, qid: crypto.randomUUID(), addedBy: member.name }));
+      if (!added.length) return;
+      room.queue.push(...added);
+      emitQueue(room);
+      system(room, added.length === 1
+        ? `${member.name} добавляет в очередь «${added[0].title}»`
+        : `${member.name} добавляет в очередь ${added.length} видео`);
+    }));
+
+    socket.on('queue:remove', inRoom((data) => {
+      if (!allow('queue', 20, 10_000)) return;
+      const before = room.queue.length;
+      room.queue = room.queue.filter((item) => item.qid !== data?.qid);
+      if (room.queue.length !== before) emitQueue(room);
+    }));
+
+    socket.on('queue:play', inRoom((data) => {
+      if (!allow('media', 10, 10_000)) return;
+      const index = room.queue.findIndex((item) => item.qid === data?.qid);
+      if (index === -1) return;
+      const [item] = room.queue.splice(index, 1);
+      emitQueue(room);
+      startMedia(room, { ...item, addedBy: member.name }, member.name);
+    }));
+
+    socket.on('queue:next', inRoom(() => {
+      if (!allow('media', 10, 10_000) || !room.queue.length) return;
+      const [item] = room.queue.splice(0, 1);
+      emitQueue(room);
+      startMedia(room, { ...item, addedBy: member.name }, member.name);
+    }));
+
+    socket.on('chat:send', inRoom((data) => {
+      const text = cleanText(data?.text, LIMITS.chat);
+      if (!text || !allow('chat', 6, 5_000)) return;
+      pushChat(room, { id: crypto.randomUUID(), type: 'user', userId: member.id, name: member.name, color: member.color, text, ts: Date.now() });
+    }));
+
+    socket.on('reaction', inRoom((data) => {
+      if (!REACTIONS.has(data?.emoji) || !allow('reaction', 12, 5_000)) return;
+      io.to(room.id).emit('reaction', { emoji: data.emoji, name: member.name, color: member.color });
+    }));
+
+    socket.on('disconnect', () => {
+      if (!room || !member) return;
+      const r = room;
+      const m = member;
+      m.sockets -= 1;
+      if (m.sockets > 0) return;
+      m.leaveTimer = setTimeout(() => {
+        if (m.sockets > 0) return;
+        r.members.delete(m.id);
+        emitMembers(r);
+        system(r, `${m.name} выходит из комнаты`);
+        if (r.members.size === 0) {
+          r.emptySince = Date.now();
+          // Никого не осталось — ставим на паузу, чтобы вернувшиеся продолжили с того же места.
+          if (r.playback.playing) r.playback = { playing: false, position: currentPosition(r), updatedAt: Date.now() };
+        }
+      }, LEAVE_GRACE_MS);
+    });
+  });
+}

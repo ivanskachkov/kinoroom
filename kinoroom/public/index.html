@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0c10">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>KinoRoom — смотрим вместе</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <main class="home">
+    <div class="home-card">
+      <div class="logo">
+        <span class="logo-mark"><i data-icon="play" data-size="16"></i></span>
+        <span class="logo-text">Kino<b>Room</b></span>
+      </div>
+
+      <div>
+        <h1>Смотрите вместе,<br>секунда в секунду</h1>
+        <p class="lead">Создайте комнату и отправьте ссылку друзьям: пауза, перемотка и выбор фильма — общие для всех.</p>
+      </div>
+
+      <div class="features">
+        <span class="chip">YouTube</span>
+        <span class="chip">Internet Archive</span>
+        <span class="chip">Ссылки .mp4 и .m3u8</span>
+        <span class="chip">Своя медиатека</span>
+        <span class="chip">Чат и реакции</span>
+      </div>
+
+      <form id="create-form" class="stack">
+        <label class="field">
+          <span>Ваше имя</span>
+          <input id="name" class="input" maxlength="24" placeholder="Как вас называть?" autocomplete="nickname" required>
+        </label>
+        <button class="btn btn-primary btn-lg" type="submit"><i data-icon="plus" data-size="18"></i>Создать комнату</button>
+      </form>
+
+      <div class="divider">или по коду</div>
+
+      <form id="join-form" class="join-row">
+        <input id="code" class="input room-code" maxlength="12" placeholder="Код комнаты" autocapitalize="characters" autocomplete="off" aria-label="Код комнаты">
+        <button class="btn btn-ghost" type="submit">Войти</button>
+      </form>
+      <p id="code-error" class="error-text"></p>
+
+      <section id="recent" class="recent" hidden>
+        <h2>Недавние комнаты</h2>
+        <ul id="recent-list"></ul>
+      </section>
+    </div>
+  </main>
+  <script type="module" src="/js/home.js"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0c10">
+  <title>Вход · KinoRoom</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <main class="home">
+    <form class="home-card" method="post" action="/api/login">
+      <div class="logo">
+        <span class="logo-mark">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M8 5.2v13.6a.8.8 0 0 0 1.2.7l10.6-6.8a.8.8 0 0 0 0-1.4L9.2 4.5A.8.8 0 0 0 8 5.2z" fill="currentColor"/></svg>
+        </span>
+        <span class="logo-text">Kino<b>Room</b></span>
+      </div>
+      <h1>Вход</h1>
+      <p class="lead">Сайт защищён паролем. Спросите его у владельца.</p>
+      <label class="field">
+        <span>Пароль</span>
+        <input class="input" type="password" name="password" autocomplete="current-password" required autofocus>
+      </label>
+      <input type="hidden" name="next" id="next">
+      <p id="error" class="error-text"></p>
+      <button class="btn btn-primary btn-lg" type="submit">Войти</button>
+    </form>
+  </main>
+  <script>
+    const params = new URLSearchParams(location.search);
+    document.getElementById('next').value = params.get('next') || '/';
+    const error = params.get('error');
+    if (error) document.getElementById('error').textContent = error === 'limit' ? 'Слишком много попыток. Подождите 10 минут.' : 'Неверный пароль';
+  </script>
+</body>
+</html>

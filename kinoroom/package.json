@@ -1,0 +1,20 @@
+{
+  "name": "kinoroom",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Совместный просмотр видео: YouTube, Internet Archive, прямые ссылки и своя медиатека",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "hls.js": "^1.7.3",
+    "socket.io": "^4.8.3"
+  }
+}
