@@ -15,8 +15,10 @@ const MIC_ERRORS = {
   NotReadableError: 'Микрофон занят другой программой',
 };
 
-const SPEAKING_LEVEL = 0.02;
+const SPEAKING_LEVEL = 0.04; // уровень входящего звука, выше которого считаем, что человек говорит
 const MAX_RETRIES = 2;
+const DEFAULT_GATE = 0.1;
+const GATE_HOLD_MS = 600; // не обрезать окончания слов и короткие паузы между ними
 
 export function createVoice({ socket, onChange }) {
   const peers = new Map(); // `${dir}:${socketId}` → { pc, dir, remoteId, memberId, pending, audio, receiver }
@@ -25,8 +27,14 @@ export function createVoice({ socket, onChange }) {
   audioBox.hidden = true;
   document.body.append(audioBox);
 
-  let localStream = null;
+  let micStream = null; // сам микрофон — его слушает индикатор уровня
+  let localStream = null; // то, что уходит слушателям: копия дорожки, которую выключает шумовой порог
   let starting = false;
+  let gateThreshold = storage.get('kr_voice_gate', DEFAULT_GATE);
+  let gateOpen = false;
+  let gateTimer = null;
+  let lastLoudAt = 0;
+  let micLevelValue = 0;
   let audioBlocked = false;
   let volume = storage.get('kr_voice_volume', 1);
   let meter = null;
@@ -182,6 +190,29 @@ export function createVoice({ socket, onChange }) {
     }
   }
 
+  // Шумовой порог: пока уровень ниже порога, слушателям уходит тишина, а не шум комнаты,
+  // и у них не приглушается фильм. Без индикатора (нет AudioContext) порог всегда открыт.
+  function startGate() {
+    gateOpen = false;
+    lastLoudAt = 0;
+    gateTimer = setInterval(() => {
+      micLevelValue = meter ? meter.level() : 1;
+      const now = performance.now();
+      if (micLevelValue >= gateThreshold) lastLoudAt = now;
+      const open = now - lastLoudAt < GATE_HOLD_MS;
+      if (open === gateOpen) return;
+      gateOpen = open;
+      for (const track of localStream?.getAudioTracks() ?? []) track.enabled = open;
+    }, 40);
+  }
+
+  function stopGate() {
+    clearInterval(gateTimer);
+    gateTimer = null;
+    gateOpen = false;
+    micLevelValue = 0;
+  }
+
   async function announce() {
     const res = await socket.timeout(5000).emitWithAck('voice:start');
     if (res?.error) throw new Error(res.error);
@@ -194,11 +225,16 @@ export function createVoice({ socket, onChange }) {
     starting = true;
     onChange();
     try {
-      localStream = await navigator.mediaDevices.getUserMedia({
+      micStream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: false,
       });
-      startMeter(localStream);
+      // Выключать саму дорожку микрофона нельзя: индикатор замолчит, и порог больше не откроется
+      const sendTrack = micStream.getAudioTracks()[0].clone();
+      sendTrack.enabled = false;
+      localStream = new MediaStream([sendTrack]);
+      startMeter(micStream);
+      startGate();
       await announce();
     } catch (err) {
       stopLocal();
@@ -211,8 +247,10 @@ export function createVoice({ socket, onChange }) {
 
   function stopLocal() {
     closeAll('out');
-    localStream?.getTracks().forEach((track) => track.stop());
+    stopGate();
+    for (const stream of [localStream, micStream]) stream?.getTracks().forEach((track) => track.stop());
     localStream = null;
+    micStream = null;
     meter?.context.close().catch(() => {});
     meter = null;
     onChange();
@@ -262,7 +300,18 @@ export function createVoice({ socket, onChange }) {
 
     /** Уровень громкости собственного микрофона, 0…1. */
     micLevel() {
-      return meter?.level() ?? 0;
+      return micLevelValue;
+    },
+    /** Открыт ли шумовой порог — то есть слышат ли вас сейчас. */
+    get gateOpen() {
+      return gateOpen;
+    },
+    get gateThreshold() {
+      return gateThreshold;
+    },
+    setGateThreshold(value) {
+      gateThreshold = value;
+      storage.set('kr_voice_gate', value);
     },
 
     /** id участников, которых сейчас слышно (по уровню входящего звука). */

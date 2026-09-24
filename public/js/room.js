@@ -302,15 +302,16 @@ function updateControls() {
   ui.time.textContent = state.media ? `${formatTime(current)} / ${duration ? formatTime(duration) : '--:--'}` : '';
 }
 
-// Громкость у каждого своя и не синхронизируется. ducked — фильм приглушён, пока кто-то говорит.
-const volume = { level: storage.get('kr_volume', 1), muted: storage.get('kr_muted', false), ducked: false };
-const DUCK_LEVEL = 0.3;
+// Громкость у каждого своя и не синхронизируется. duck — множитель, пока кто-то говорит (1 — не приглушено).
+const volume = { level: storage.get('kr_volume', 1), muted: storage.get('kr_muted', false), duck: 1 };
+
+function setPlayersVolume() {
+  for (const player of [youtube, file]) player.setVolume(volume.level * volume.duck);
+}
 
 function applyVolume() {
-  for (const player of [youtube, file]) {
-    player.setVolume(volume.level * (volume.ducked ? DUCK_LEVEL : 1));
-    player.setMuted(volume.muted);
-  }
+  setPlayersVolume();
+  for (const player of [youtube, file]) player.setMuted(volume.muted);
   const shown = volume.muted ? 0 : volume.level;
   ui.volume.value = shown;
   ui.volume.style.setProperty('--pct', `${shown * 100}%`);
@@ -556,8 +557,15 @@ $('#members-wrap').addEventListener('click', () => selectTab('people'));
 
 const voice = createVoice({ socket, onChange: renderVoice });
 const micButtons = { toggle: $('#mic-toggle'), quick: $('#mic-quick') };
-let duckEnabled = storage.get('kr_voice_duck', true);
+const DUCK_HOLD_MS = 1200; // пауза между фразами не должна дёргать громкость фильма туда-обратно
+// Громкость фильма, пока кто-то говорит (1 — не приглушать). Раньше здесь был флажок вкл/выкл
+let duckLevel = storage.get('kr_voice_duck_level', storage.get('kr_voice_duck', true) ? 0.6 : 1);
 let lastVoiceAt = 0;
+
+function syncRange(input) {
+  const { min, max, value } = input;
+  input.style.setProperty('--pct', `${((value - min) / (max - min)) * 100}%`);
+}
 
 async function toggleMic() {
   if (voice.active) return voice.stop();
@@ -580,6 +588,7 @@ function renderVoice() {
   micButtons.quick.setAttribute('aria-label', label);
   micButtons.quick.disabled = starting;
   $('#mic-meter').hidden = !active;
+  $('#voice-gate-row').hidden = !active;
   $('#voice-unlock').hidden = !voice.audioBlocked;
   $('#voice-status').textContent = active ? `в эфире · слушателей: ${voice.connectedCount()}` : '';
   if (!voice.supported) {
@@ -599,33 +608,58 @@ $('#voice-unlock').addEventListener('click', () => voice.unlock());
 // Любой клик по странице — повод снова попробовать включить заблокированный звук.
 document.addEventListener('pointerdown', () => voice.unlock());
 
-$('#voice-volume').value = voice.volume;
-$('#voice-volume').style.setProperty('--pct', `${voice.volume * 100}%`);
-$('#voice-volume').addEventListener('input', (event) => {
-  voice.setVolume(Number(event.target.value));
-  event.target.style.setProperty('--pct', `${event.target.value * 100}%`);
-});
-$('#voice-duck').checked = duckEnabled;
-$('#voice-duck').addEventListener('change', (event) => {
-  duckEnabled = event.target.checked;
-  storage.set('kr_voice_duck', duckEnabled);
+const voiceVolume = $('#voice-volume');
+voiceVolume.value = voice.volume;
+syncRange(voiceVolume);
+voiceVolume.addEventListener('input', () => {
+  voice.setVolume(Number(voiceVolume.value));
+  syncRange(voiceVolume);
 });
 
-// Подсветка говорящих и приглушение фильма. Уровни звука браузер отдаёт без обработки звука.
+const duckInput = $('#voice-duck');
+function renderDuck() {
+  duckInput.value = duckLevel;
+  syncRange(duckInput);
+  $('#voice-duck-value').textContent = duckLevel >= 1 ? 'не приглушать' : `${Math.round(duckLevel * 100)}%`;
+}
+duckInput.addEventListener('input', () => {
+  duckLevel = Number(duckInput.value);
+  storage.set('kr_voice_duck_level', duckLevel);
+  renderDuck();
+});
+renderDuck();
+
+// Порог отсечки шума: метка на шкале уровня микрофона. Всё, что левее, слушатели не слышат
+const gateInput = $('#voice-gate');
+function renderGate() {
+  gateInput.value = voice.gateThreshold;
+  syncRange(gateInput);
+  $('#mic-threshold').style.left = `${Math.min(100, voice.gateThreshold * 100)}%`;
+}
+gateInput.addEventListener('input', () => {
+  voice.setGateThreshold(Number(gateInput.value));
+  renderGate();
+});
+renderGate();
+
+// Подсветка говорящих, шкала микрофона и приглушение фильма
 setInterval(() => {
   const speaking = voice.speakingMembers();
-  const myLevel = voice.micLevel();
-  if (voice.active && myLevel > 0.08 && state.me) speaking.add(state.me.id);
+  if (voice.active && voice.gateOpen && state.me) speaking.add(state.me.id);
   for (const node of document.querySelectorAll('[data-member]')) node.classList.toggle('speaking', speaking.has(node.dataset.member));
-  $('#mic-meter-fill').style.width = `${Math.round(myLevel * 100)}%`;
+  const fill = $('#mic-meter-fill');
+  fill.style.width = `${Math.round(voice.micLevel() * 100)}%`;
+  fill.classList.toggle('is-open', voice.gateOpen);
 
+  // Приглушаем быстро, чтобы сразу расслышать речь, а возвращаем громкость плавно
   const now = performance.now();
-  const othersSpeaking = [...speaking].some((id) => id !== state.me?.id);
-  if (othersSpeaking) lastVoiceAt = now;
-  const ducked = duckEnabled && now - lastVoiceAt < 900;
-  if (ducked !== volume.ducked) {
-    volume.ducked = ducked;
-    applyVolume();
+  if ([...speaking].some((id) => id !== state.me?.id)) lastVoiceAt = now;
+  const target = now - lastVoiceAt < DUCK_HOLD_MS ? duckLevel : 1;
+  const step = target < volume.duck ? 0.15 : 0.05;
+  const next = Math.abs(target - volume.duck) <= step ? target : volume.duck + Math.sign(target - volume.duck) * step;
+  if (next !== volume.duck) {
+    volume.duck = next;
+    setPlayersVolume();
   }
 }, 150);
 setInterval(renderVoice, 2000);

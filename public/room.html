@@ -106,16 +106,20 @@
             <span id="voice-status" class="voice-status"></span>
           </div>
           <button id="mic-toggle" class="btn btn-primary mic-toggle" type="button"></button>
-          <div id="mic-meter" class="mic-meter" hidden><span id="mic-meter-fill"></span></div>
+          <div id="mic-meter" class="mic-meter" hidden title="Уровень вашего микрофона. Левее метки — вас не слышно"><span id="mic-meter-fill"></span><i id="mic-threshold" class="mic-threshold"></i></div>
+          <label id="voice-gate-row" class="voice-row voice-row-stack" hidden>
+            <span>Отсечка шума — двигайте метку правее, пока фон в тишине не окажется левее неё</span>
+            <input id="voice-gate" class="range" type="range" min="0.02" max="0.5" step="0.01" aria-label="Отсечка шума">
+          </label>
           <p id="voice-hint" class="voice-hint">Слушать может каждый, микрофон нужен только тому, кто говорит. Лучше в наушниках — иначе микрофон подхватит звук фильма.</p>
           <button id="voice-unlock" class="btn btn-ghost btn-sm" type="button" hidden><i data-icon="volume" data-size="16"></i>Включить звук голосов</button>
           <label class="voice-row">
             <span>Громкость голосов</span>
             <input id="voice-volume" class="range" type="range" min="0" max="1" step="0.05" aria-label="Громкость голосов">
           </label>
-          <label class="voice-row voice-check">
-            <input id="voice-duck" type="checkbox">
-            <span>Приглушать фильм, пока кто-то говорит</span>
+          <label class="voice-row">
+            <span>Фильм, пока говорят: <b id="voice-duck-value"></b></span>
+            <input id="voice-duck" class="range" type="range" min="0.2" max="1" step="0.05" aria-label="Громкость фильма, пока кто-то говорит">
           </label>
         </div>
         <ul id="people-list" class="people-list"></ul>
