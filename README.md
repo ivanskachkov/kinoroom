@@ -114,6 +114,34 @@ cloudflared tunnel --url http://localhost:3000
 - **Cloudflare**: в [панели Cloudflare](https://dash.cloudflare.com) откройте «Realtime» → «TURN Server» → «Create». Скопируйте «Turn Token ID» в `CF_TURN_KEY_ID`, а API token — в `CF_TURN_API_TOKEN`. Стоит $0,05 за ГБ трафика через ретранслятор; час разговора одного человека — примерно 20 МБ на каждого слушателя, и ретранслятор используется только там, где напрямую не получилось.
 - **Свой coturn или любой другой TURN**: заполните `TURN_URLS`, `TURN_USERNAME` и `TURN_CREDENTIAL`.
 
+## Сторож: автоматический перезапуск
+
+`deploy/watchdog.sh` раз в 30 минут проверяет малинку:
+
+- **Упавшие службы** перезапускает, в том числе те, которые systemd перестал поднимать после серии сбоев подряд. Если нет интернета, службы не трогает.
+- **Зависший KinoRoom** (процесс жив, но сайт не отвечает на запросы) тоже перезапускает. Перед этим проверяет дважды, чтобы не реагировать на один медленный ответ.
+- **Tailscale Funnel** включает заново, если настройка сбросилась.
+- **Уведомление** о каждом перезапуске присылает владельцу в Telegram через любого бота, у которого в `.env` есть `TELEGRAM_BOT_TOKEN` и `TELEGRAM_OWNER_ID`.
+
+Установка:
+
+```bash
+sudo install -m 755 deploy/watchdog.sh /usr/local/sbin/pi-watchdog
+sudo cp deploy/pi-watchdog.service deploy/pi-watchdog.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now pi-watchdog.timer
+```
+
+Что проверять, задаётся в `/etc/default/pi-watchdog`:
+
+```bash
+WATCHDOG_SERVICES="kinoroom restaurant-bot tgbot tailscaled"
+WATCHDOG_HTTP_CHECKS="kinoroom=http://localhost:3000/login"
+WATCHDOG_FUNNEL_PORT=3000
+WATCHDOG_NOTIFY_ENV=/home/is/restaraunt-create-bot/.env
+```
+
+Журнал проверок смотрится командой `journalctl -u pi-watchdog`, запуск вне очереди — `sudo systemctl start pi-watchdog`. После правок в `watchdog.sh` повторите первую команду установки.
+
 ## Голосовой чат
 
 Во вкладке «Люди» или кнопкой с микрофоном под плеером любой участник включает микрофон, и его слышат все в комнате. Говорить могут несколько человек одновременно. У говорящего аватарка подсвечивается зелёным.
@@ -164,5 +192,5 @@ lib/auth.js          — общий пароль на сайт
 public/js/room.js    — логика комнаты и досинхронизация плеера
 public/js/players.js — плееры YouTube и <video>/HLS с общим интерфейсом
 public/js/search.js  — строка поиска и карточки результатов
-deploy/              — systemd-сервис для малинки
+deploy/              — systemd-службы для малинки и сторож (watchdog.sh)
 ```

@@ -1,0 +1,11 @@
+# Сторож малинки (deploy/watchdog.sh). Запускается таймером pi-watchdog.timer, установка — в README.
+
+[Unit]
+Description=Сторож малинки: проверка и перезапуск служб
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/pi-watchdog
+ExecStart=/usr/local/sbin/pi-watchdog
