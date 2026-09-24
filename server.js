@@ -7,6 +7,7 @@ import { createAuth } from './lib/auth.js';
 import { createSearchRouter } from './lib/search.js';
 import { createLibraryRouter } from './lib/library.js';
 import { attachRooms } from './lib/rooms.js';
+import { createRoomStore } from './lib/store.js';
 import { getIceServers, hasTurn } from './lib/ice.js';
 
 const app = express();
@@ -47,7 +48,8 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'Не найдено
 const server = http.createServer(app);
 const io = new Server(server, { maxHttpBufferSize: 64 * 1024 });
 if (auth) io.use(auth.socketGuard);
-attachRooms(io, { libraryEnabled: Boolean(config.mediaDir) });
+const store = createRoomStore({ dir: config.dataDir, ttlDays: config.roomTtlDays });
+const rooms = attachRooms(io, { libraryEnabled: Boolean(config.mediaDir), store });
 
 server.listen(config.port, config.host, () => {
   const on = (value) => (value ? 'вкл' : 'выкл');
@@ -56,10 +58,12 @@ server.listen(config.port, config.host, () => {
     `  Поиск фильмов (TMDB): ${on(config.tmdbKey)} · YouTube-поиск: ${on(config.youtubeKey)} · ` +
       `Медиатека: ${config.mediaDir ?? 'выкл'} · Пароль: ${on(config.sitePassword)} · TURN для голоса: ${on(hasTurn())}`,
   );
+  console.log(`  Комнаты хранятся ${config.roomTtlDays} дн. в ${config.dataDir}`);
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
+    rooms.saveAll(); // перезапуск сторожем или обновление не должны сбрасывать позицию
     io.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 3000).unref();
   });
