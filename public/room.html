@@ -51,6 +51,20 @@
           <button id="empty-search" class="btn btn-primary" type="button"><i data-icon="search" data-size="16"></i>Найти, что посмотреть</button>
         </div>
 
+        <div id="external-view" class="external-view" hidden>
+          <span class="ext-service">NETFLIX</span>
+          <h2 id="ext-title" class="ext-title"></h2>
+          <div id="ext-time" class="ext-time">0:00</div>
+          <div id="ext-ready-count" class="ext-ready-count"></div>
+          <div class="ext-actions">
+            <a id="ext-open" class="btn btn-primary" href="https://www.netflix.com" target="_blank" rel="noopener">Открыть на Netflix</a>
+            <button id="ext-ready" class="btn btn-ghost" type="button">Я готов</button>
+          </div>
+          <p id="ext-status" class="ext-status"></p>
+        </div>
+        <div id="countdown" class="countdown" hidden></div>
+        <div id="ext-notice" class="ext-notice" hidden></div>
+
         <div id="click-layer" class="click-layer"></div>
         <div id="reactions-layer" class="reactions-layer" aria-hidden="true"></div>
         <div id="chat-overlay" class="chat-overlay" aria-hidden="true"></div>

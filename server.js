@@ -8,6 +8,7 @@ import { createSearchRouter } from './lib/search.js';
 import { createLibraryRouter } from './lib/library.js';
 import { attachRooms } from './lib/rooms.js';
 import { createRoomStore } from './lib/store.js';
+import { buildExtensionZip } from './lib/extension.js';
 import { getIceServers, hasTurn } from './lib/ice.js';
 
 const app = express();
@@ -36,6 +37,11 @@ app.get('/api/config', (req, res) => {
       gdriveFolder: Boolean(config.gdriveKey && config.gdriveFolder),
     },
   });
+});
+app.get('/kinoroom-extension.zip', (req, res) => {
+  const site = `${req.protocol}://${req.get('x-forwarded-host') ?? req.get('host')}`;
+  res.set({ 'content-type': 'application/zip', 'content-disposition': 'attachment; filename="kinoroom-extension.zip"' });
+  res.send(buildExtensionZip(site));
 });
 app.get('/api/rooms', (req, res) => {
   res.set('cache-control', 'no-store').json({ rooms: rooms.list(req.query.q) });

@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "KinoRoom — синхронизация Netflix",
+  "version": "1.0.0",
+  "description": "Пауза и перемотка Netflix синхронно со всей комнатой KinoRoom.",
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.netflix.com/*"],
+      "js": ["netflix-bridge.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.netflix.com/*"],
+      "js": ["netflix-page.js"],
+      "world": "MAIN",
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://kinoroom.tail39befd.ts.net/*", "http://localhost/*"],
+      "js": ["kinoroom-bridge.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

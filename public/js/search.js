@@ -20,6 +20,12 @@ export function parseLink(text) {
   }
   if (youtubeId && /^[\w-]{11}$/.test(youtubeId)) return { type: 'youtube', id: youtubeId };
 
+  // Netflix: netflix.com/watch/ID или /title/ID (для фильма это один и тот же номер)
+  if (host === 'netflix.com') {
+    const netflixId = url.pathname.match(/\/(?:watch|title)\/(\d{5,12})/)?.[1];
+    if (netflixId) return { type: 'netflix', id: netflixId };
+  }
+
   // Google Диск: /file/d/ID/view, open?id=ID, uc?id=ID, drive.usercontent…/download?id=ID
   if (/^(drive|docs)\.google\.com$|^drive\.usercontent\.google\.com$/.test(host)) {
     if (url.pathname.includes('/folders/')) return { type: 'gdrive-folder' };
@@ -299,6 +305,44 @@ export function createSearch({ sources, onPlay, onQueue }) {
     );
   }
 
+  // Где фильм есть легально в стране зрителей — по данным JustWatch через TMDB
+  function whereToWatch(d) {
+    const w = d.watch;
+    if (!w) return null;
+    const rows = [
+      ['Подписка', w.subscription],
+      ['Бесплатно', w.free],
+      ['Аренда', w.rent],
+      ['Покупка', w.buy],
+    ].filter(([, names]) => names.length);
+    if (!rows.length) return el('p', { class: 'muted where-watch' }, `Легально посмотреть в стране ${w.region}: данных нет`);
+    return el(
+      'div',
+      { class: 'where-watch' },
+      el('div', { class: 'where-title' }, `Где смотреть (${w.region})`),
+      rows.map(([label, names]) => el('div', { class: 'where-row' }, el('span', { class: 'muted' }, `${label}: `), names.join(', '))),
+    );
+  }
+
+  // Есть на Netflix — можно смотреть вместе: у каждого своя подписка, KinoRoom синхронизирует время.
+  // Номера фильма в Netflix TMDB не знает, поэтому ссылка ведёт на поиск Netflix по названию.
+  function netflixButton(d) {
+    if (d.type !== 'movie' || !d.watch?.subscription.includes('Netflix')) return null;
+    const button = el('button', { class: 'btn btn-primary', type: 'button' }, icon('play', 16), 'Смотреть вместе на Netflix');
+    button.addEventListener('click', () =>
+      onPlay({
+        kind: 'external',
+        service: 'netflix',
+        url: `https://www.netflix.com/search?q=${encodeURIComponent(d.originalTitle || d.title)}`,
+        title: d.title,
+        thumb: d.poster,
+        duration: d.runtime ? d.runtime * 60 : null,
+        source: 'netflix',
+      }),
+    );
+    return button;
+  }
+
   function tmdbView(item) {
     const view = el('div', { class: 'search-view' }, backButton());
     const extra = el('div', { class: 'detail-extra' });
@@ -335,7 +379,8 @@ export function createSearch({ sources, onPlay, onQueue }) {
             el('div', { class: 'detail-meta' }, facts.join(' · ')),
             d.genres.length ? el('div', { class: 'detail-genres' }, d.genres.map((g) => el('span', { class: 'chip' }, g))) : null,
             d.overview ? el('p', { class: 'detail-overview' }, d.overview) : null,
-            el('div', { class: 'detail-actions' }, sources.youtube ? youtubeButton : null),
+            whereToWatch(d),
+            el('div', { class: 'detail-actions' }, netflixButton(d), sources.youtube ? youtubeButton : null),
           ),
         );
 
@@ -370,6 +415,19 @@ export function createSearch({ sources, onPlay, onQueue }) {
 
   function linkView(link) {
     const view = el('div', { class: 'search-view' });
+    if (link.type === 'netflix') {
+      // Название по ссылке без входа в Netflix не узнать — его вписывает тот, кто включает
+      const titleInput = el('input', { class: 'input', maxlength: '200', placeholder: 'Название фильма (для чата)', value: '' });
+      const start = el('button', { class: 'btn btn-primary', type: 'button' }, icon('play', 16), 'Смотреть вместе на Netflix');
+      start.addEventListener('click', () =>
+        onPlay({ kind: 'external', service: 'netflix', ref: link.id, title: titleInput.value.trim() || 'Фильм на Netflix', source: 'netflix' }),
+      );
+      view.append(
+        el('div', { class: 'netflix-card' }, el('span', { class: 'ext-service' }, 'NETFLIX'), titleInput, start),
+        el('p', { class: 'hint' }, 'У каждого своя подписка Netflix. Видео каждый смотрит у себя, а KinoRoom даёт общий отсчёт, паузы и перемотку. На компьютере с расширением KinoRoom всё синхронизируется само.'),
+      );
+      return view;
+    }
     if (link.type === 'gdrive-folder') {
       view.append(el('p', { class: 'hint' }, 'Это ссылка на папку. Вставьте ссылку на сам видеофайл — или укажите ID этой папки в GDRIVE_FOLDER_ID на сервере, и все фильмы из неё появятся в поиске.'));
       return view;

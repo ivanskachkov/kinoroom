@@ -211,6 +211,140 @@ export class YouTubePlayer {
   }
 }
 
+/**
+ * Фильм на Netflix. Видео у каждого своё — в его аккаунте, — а этот «плеер» только держит время.
+ * С расширением KinoRoom (компьютер, вкладка netflix.com) команды уходят в настоящий плеер Netflix,
+ * и KinoRoom видит его время. Без расширения это виртуальные часы: зрители жмут кнопки сами,
+ * по отсчёту и подсказкам на экране.
+ */
+export class NetflixPlayer {
+  kind = 'external';
+
+  constructor(view, events) {
+    this.view = view;
+    this.events = events;
+    this.media = null;
+    this.extension = false; // расширение установлено
+    this.connected = false; // открыта вкладка Netflix
+    this.remote = null; // последнее состояние плеера Netflix
+    this.remoteAt = 0;
+    this.lastCommandAt = 0;
+    this.clock = { playing: false, time: 0, at: 0 }; // виртуальные часы без расширения
+    window.addEventListener('message', (event) => this.onMessage(event));
+    this.send({ type: 'hello' });
+  }
+
+  /** Автоматическая синхронизация: расширение есть и в соседней вкладке открыт фильм. */
+  get auto() {
+    return Boolean(this.extension && this.connected && this.remote?.ready);
+  }
+
+  send(message) {
+    window.postMessage({ kinoroomExt: 'from-page', ...message }, location.origin);
+  }
+
+  command(cmd, value) {
+    this.lastCommandAt = performance.now();
+    // Запоминаем, чего ждём от плеера: такие изменения — наши, а не действия зрителя
+    if (cmd === 'play' || cmd === 'pause') this.expectPaused = cmd === 'pause';
+    if (cmd === 'seek') this.expectTime = value;
+    this.send({ type: 'command', cmd, value });
+  }
+
+  onMessage(event) {
+    if (event.source !== window || event.data?.kinoroomExt !== 'to-page') return;
+    const message = event.data;
+    const wasAuto = this.auto;
+    if (message.type === 'extension') this.extension = true;
+    else if (message.type === 'netflix-status') {
+      this.connected = message.connected;
+      if (!message.connected) this.remote = null;
+    } else if (message.type === 'netflix-state') {
+      this.extension = true;
+      this.connected = true;
+      this.detectUserAction(this.remote, message);
+      this.remote = message;
+      this.remoteAt = performance.now();
+      this.events.onDuration?.(this);
+    }
+    if (wasAuto !== this.auto || message.type !== 'netflix-state') this.events.onExternalStatus?.(this);
+  }
+
+  // Пауза или перемотка прямо в Netflix (не нашей командой) — сообщаем комнате.
+  // Сразу после нашей команды плеер меняется сам — такие изменения отличаем по тому, что мы заказали.
+  detectUserAction(previous, next) {
+    if (!this.media || !previous?.ready || !next.ready) return;
+    const recent = performance.now() - this.lastCommandAt < 2000;
+    if (previous.paused !== next.paused) {
+      if (recent && next.paused === this.expectPaused) return;
+      this.events.onUserControl?.(this, next.paused ? 'pause' : 'play', next.time);
+      return;
+    }
+    const elapsed = (performance.now() - this.remoteAt) / 1000;
+    const expected = previous.paused ? previous.time : previous.time + elapsed;
+    if (Math.abs(next.time - expected) <= 4) return;
+    if (recent && Number.isFinite(this.expectTime) && Math.abs(next.time - this.expectTime) < 2) return;
+    this.events.onUserControl?.(this, 'seek', next.time);
+  }
+
+  async load(media, start) {
+    this.media = media;
+    this.clock = { playing: false, time: start, at: performance.now() };
+  }
+
+  clockTime() {
+    const { playing, time, at } = this.clock;
+    return playing ? time + (performance.now() - at) / 1000 : time;
+  }
+
+  play() {
+    if (this.auto) this.command('play');
+    else this.clock = { playing: true, time: this.clockTime(), at: performance.now() };
+  }
+
+  pause() {
+    if (this.auto) this.command('pause');
+    else this.clock = { playing: false, time: this.clockTime(), at: performance.now() };
+  }
+
+  seek(t) {
+    if (this.auto) this.command('seek', t);
+    else this.clock = { ...this.clock, time: t, at: performance.now() };
+  }
+
+  time() {
+    if (!this.auto) return this.clockTime();
+    const { time, paused } = this.remote;
+    return paused ? time : time + (performance.now() - this.remoteAt) / 1000;
+  }
+
+  duration() {
+    return (this.auto ? this.remote.duration : 0) || this.media?.duration || 0;
+  }
+
+  isPlaying() {
+    return this.auto ? !this.remote.paused : this.clock.playing;
+  }
+
+  isBuffering() {
+    return false;
+  }
+
+  setRate() {}
+
+  setVolume() {}
+
+  setMuted() {}
+
+  stop() {
+    this.media = null;
+  }
+
+  show(visible) {
+    this.view.hidden = !visible;
+  }
+}
+
 const MEDIA_ERRORS = {
   1: 'Загрузка видео прервана',
   2: 'Не удалось загрузить видео — проверьте ссылку или интернет',

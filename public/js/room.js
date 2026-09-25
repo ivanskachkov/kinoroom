@@ -1,6 +1,6 @@
 import { $, el, api, icon, hydrateIcons, storage, randomId, normalizeRoomId, formatTime, toast, copyText } from './common.js';
 import { Clock } from './clock.js';
-import { YouTubePlayer, FilePlayer } from './players.js';
+import { YouTubePlayer, FilePlayer, NetflixPlayer } from './players.js';
 import { createSearch } from './search.js';
 import { createVoice } from './voice.js';
 
@@ -27,8 +27,8 @@ const clientId = (() => {
   }
 })();
 
-const SOURCE_LABELS = { youtube: 'YouTube', archive: 'Internet Archive', link: 'Ссылка', library: 'Медиатека', tmdb: 'Трейлер', gdrive: 'Google Диск' };
-const HARD_DRIFT = { youtube: 1.2, file: 2 }; // дальше этого — перематываем
+const SOURCE_LABELS = { youtube: 'YouTube', archive: 'Internet Archive', link: 'Ссылка', library: 'Медиатека', tmdb: 'Трейлер', gdrive: 'Google Диск', netflix: 'Netflix' };
+const HARD_DRIFT = { youtube: 1.2, file: 2, external: 2.5 }; // дальше этого — перематываем (Netflix перематывает медленнее)
 const SOFT_DRIFT = 0.25; // ближе этого — считаем, что всё синхронно
 
 const state = {
@@ -72,9 +72,18 @@ const playerEvents = {
   onDuration(player) {
     if (player === active) updateControls();
   },
+  // Пауза или перемотка прямо в Netflix — это действие зрителя, его нужно разослать комнате
+  onUserControl(player, action, time) {
+    if (player === active) sendControl(action, time);
+  },
+  onExternalStatus() {
+    renderExternal();
+  },
 };
 const youtube = new YouTubePlayer($('#yt-host'), playerEvents);
 const file = new FilePlayer($('#video'), playerEvents);
+const netflix = new NetflixPlayer($('#external-view'), playerEvents);
+const players = [youtube, file, netflix];
 
 let active = null;
 let loadSeq = 0;
@@ -83,8 +92,14 @@ let lastCorrection = 0;
 let lastPlayAttempt = 0;
 let scrubbing = false;
 
+/** Сколько мс до назначенного старта (общий отсчёт у фильмов на Netflix), 0 — старт уже был. */
+function startsIn() {
+  return state.playback.playing ? Math.max(0, state.playback.updatedAt - clock.now()) : 0;
+}
+
 function expectedPosition() {
   const { playing, position, updatedAt } = state.playback;
+  if (startsIn() > 0) return position; // идёт отсчёт — фильм ещё стоит
   let pos = playing ? position + (clock.now() - updatedAt) / 1000 : position;
   const duration = active?.duration();
   if (duration > 0) pos = Math.min(pos, duration);
@@ -105,7 +120,7 @@ async function applyMedia() {
   active = null;
 
   if (!media) {
-    for (const player of [youtube, file]) {
+    for (const player of players) {
       player.stop();
       player.show(false);
     }
@@ -115,10 +130,12 @@ async function applyMedia() {
   }
 
   $('#player-empty').hidden = true;
-  const next = media.kind === 'youtube' ? youtube : file;
-  const other = next === youtube ? file : youtube;
-  other.stop();
-  other.show(false);
+  const next = media.kind === 'youtube' ? youtube : media.kind === 'external' ? netflix : file;
+  for (const other of players) {
+    if (other === next) continue;
+    other.stop();
+    other.show(false);
+  }
   next.show(true);
   showNotice('Загрузка…', { spinner: true });
 
@@ -132,13 +149,26 @@ async function applyMedia() {
   hideNotice();
   active = next;
   applyVolume();
+  renderExternal();
   applyPlayback(true);
 }
 
 /** Приводит локальный плеер к состоянию комнаты. force — после явного действия кого-то из участников. */
+let startTimer = null;
+
 function applyPlayback(force = false) {
   updateControls();
+  renderCountdown();
   if (!active) return;
+  // Назначен старт по отсчёту: держим на паузе на нужной секунде и запускаемся ровно в ноль
+  const wait = startsIn();
+  clearTimeout(startTimer);
+  if (wait > 0) {
+    if (active.isPlaying()) active.pause();
+    if (Math.abs(active.time() - expectedPosition()) > 0.5) active.seek(expectedPosition());
+    startTimer = setTimeout(() => applyPlayback(true), wait + 20);
+    return;
+  }
   const expected = expectedPosition();
   const drift = active.time() - expected;
   if (Math.abs(drift) > (force ? 0.5 : HARD_DRIFT[active.kind])) {
@@ -155,6 +185,7 @@ function applyPlayback(force = false) {
 // Раз в секунду сверяемся с «идеальной» позицией и мягко догоняем.
 function syncTick() {
   if (!active) return setSync(state.media ? 'wait' : 'idle');
+  if (startsIn() > 0) return setSync('wait', 0); // идёт отсчёт — всё решит applyPlayback в ноль
   const now = performance.now();
   const expected = expectedPosition();
   const drift = active.time() - expected;
@@ -236,6 +267,88 @@ function showBlocked() {
 }
 
 // ---------------------------------------------------------------------------
+// Фильм на Netflix: экран вместо плеера, общий отсчёт и подсказки для ручной синхронизации
+// ---------------------------------------------------------------------------
+
+function externalStatus() {
+  if (netflix.auto) return ['✅ Netflix подключён через расширение — пауза и перемотка у вас срабатывают сами'];
+  if (netflix.extension) return ['Расширение на месте — откройте фильм на Netflix в соседней вкладке этого браузера'];
+  return [
+    'Синхронизация вручную: жмите ▶ в Netflix по общему отсчёту. На компьютере всё может происходить само — ',
+    el('a', { href: '/kinoroom-extension.zip' }, 'поставьте расширение KinoRoom'),
+    '.',
+  ];
+}
+
+function renderExternal() {
+  const media = state.media;
+  if (media?.kind !== 'external') return;
+  $('#ext-title').textContent = media.title;
+  $('#ext-open').href = media.url;
+  const me = state.members.find((member) => member.id === state.me?.id);
+  const readyButton = $('#ext-ready');
+  readyButton.textContent = me?.ready ? '✓ Готов' : 'Я готов';
+  readyButton.classList.toggle('is-ready', Boolean(me?.ready));
+  const ready = state.members.filter((member) => member.ready).length;
+  $('#ext-ready-count').textContent = state.members.length > 1 ? `Готовы: ${ready} из ${state.members.length}` : '';
+  $('#ext-status').replaceChildren(...externalStatus());
+}
+
+$('#ext-ready').addEventListener('click', () => {
+  const me = state.members.find((member) => member.id === state.me?.id);
+  socket.emit('external:ready', { ready: !me?.ready });
+});
+
+const countdownBox = $('#countdown');
+let countdownTimer = null;
+
+function countdownTick() {
+  const wait = startsIn();
+  if (wait > 0) {
+    countdownBox.textContent = Math.ceil(wait / 1000);
+    countdownBox.classList.remove('is-go');
+    countdownBox.hidden = false;
+    return;
+  }
+  clearInterval(countdownTimer);
+  countdownTimer = null;
+  if (countdownBox.hidden || countdownBox.classList.contains('is-go')) return;
+  // Отсчёт закончился. Без расширения каждый жмёт Play сам — напоминаем крупно
+  if (state.media?.kind === 'external' && !netflix.auto && state.playback.playing) {
+    countdownBox.textContent = '▶ Жмите Play!';
+    countdownBox.classList.add('is-go');
+    setTimeout(() => (countdownBox.hidden = true), 1500);
+  } else {
+    countdownBox.hidden = true;
+  }
+}
+
+function renderCountdown() {
+  countdownTick();
+  if (startsIn() > 0 && !countdownTimer) countdownTimer = setInterval(countdownTick, 100);
+}
+
+let externalNoticeTimer = null;
+
+// Без расширения чужую паузу и перемотку каждый повторяет у себя — подсказываем, что сделать
+function showExternalNotice(playback) {
+  if (state.media?.kind !== 'external' || netflix.auto) return;
+  if (playback.updatedAt - clock.now() > 500) return; // это старт по отсчёту — он и так крупно на экране
+  const time = formatTime(playback.position);
+  const text = {
+    pause: `⏸ Пауза на ${time} — поставьте на паузу у себя`,
+    seek: `⏩ Перемотайте у себя на ${time}`,
+    play: `▶ Продолжаем с ${time} — жмите Play`,
+  }[playback.action];
+  if (!text) return;
+  const box = $('#ext-notice');
+  box.textContent = text;
+  box.hidden = false;
+  clearTimeout(externalNoticeTimer);
+  externalNoticeTimer = setTimeout(() => (box.hidden = true), 5000);
+}
+
+// ---------------------------------------------------------------------------
 // Управление
 // ---------------------------------------------------------------------------
 
@@ -251,14 +364,16 @@ const ui = {
   quality: $('#btn-quality'),
 };
 
-function sendControl(action, position) {
+const COUNTDOWN_MS = 3000; // как на сервере: EXTERNAL_COUNTDOWN_MS
+
+function sendControl(action, position, { countdown = false } = {}) {
   if (!state.media || !joined) return;
   const at = clock.now();
   const playing = action === 'play' ? true : action === 'pause' ? false : state.playback.playing;
   // Применяем сразу, не дожидаясь ответа сервера, — так управление не «залипает».
-  state.playback = { playing, position, updatedAt: at };
+  state.playback = { playing, position, updatedAt: countdown ? at + COUNTDOWN_MS : at };
   applyPlayback(true);
-  socket.emit('player:control', { action, position, at });
+  socket.emit('player:control', { action, position, at, countdown });
 }
 
 function currentTime() {
@@ -269,7 +384,8 @@ function togglePlay() {
   if (!state.media) return;
   if (state.playback.playing) return sendControl('pause', currentTime());
   const position = expectedPosition();
-  sendControl('play', nearEnd(position) ? 0 : position);
+  // Фильм на Netflix каждый запускает у себя — поэтому старт по общему отсчёту
+  sendControl('play', nearEnd(position) ? 0 : position, { countdown: state.media.kind === 'external' });
 }
 
 function seekBy(delta) {
@@ -300,7 +416,11 @@ function updateControls() {
   playerEl.classList.toggle('is-empty', !state.media);
   ui.next.hidden = state.queue.length === 0;
   ui.cc.hidden = state.media?.kind !== 'youtube';
-  ui.quality.hidden = !state.media;
+  ui.quality.hidden = !state.media || state.media.kind === 'external';
+  if (state.media?.kind === 'external') {
+    const duration = active?.duration();
+    $('#ext-time').textContent = formatTime(expectedPosition()) + (duration ? ` / ${formatTime(duration)}` : '');
+  }
   if (state.media) $('#quality-label').textContent = currentQualityLabel();
 
   const duration = active?.duration() || state.media?.duration || 0;
@@ -594,9 +714,11 @@ function renderMembers() {
         avatar(m),
         el('span', { class: 'person-name' }, m.name, m.id === state.me?.id ? el('span', { class: 'muted' }, ' (вы)') : null),
         m.mic ? el('span', { class: 'person-mic', title: 'Микрофон включён' }, icon('mic', 16)) : null,
+        state.media?.kind === 'external' && m.ready ? el('span', { class: 'person-ready', title: 'Открыл фильм и готов' }, '✓') : null,
       ),
     ),
   );
+  renderExternal();
 }
 
 function renderQueue() {
@@ -1077,6 +1199,7 @@ socket.on('connect_error', (err) => {
 socket.on('playback', (playback) => {
   state.playback = { playing: playback.playing, position: playback.position, updatedAt: playback.updatedAt };
   applyPlayback(true);
+  showExternalNotice(playback);
 });
 socket.on('media', ({ media, playback }) => {
   state.media = media;
