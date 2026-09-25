@@ -47,6 +47,8 @@ function loadHls() {
 
 const YT_STATE = { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 };
 
+const YT_QUALITY = { tiny: '144p', small: '240p', medium: '360p', large: '480p', hd720: '720p', hd1080: '1080p', hd1440: '1440p', hd2160: '4K', highres: '4K+' };
+
 const YT_ERRORS = {
   2: 'Неверная ссылка на видео YouTube',
   5: 'Плеер YouTube не может воспроизвести это видео',
@@ -183,6 +185,11 @@ export class YouTubePlayer {
     // YouTube поддерживает только фиксированные скорости (0.75, 1.25…) — для плавной подстройки не годится.
   }
 
+  /** Качество, которое YouTube выбрал сам: задать его во встроенном плеере нельзя с 2019 года. */
+  qualityLabel() {
+    return YT_QUALITY[this.player?.getPlaybackQuality?.()] ?? null;
+  }
+
   setVolume(level) {
     this.player?.setVolume?.(Math.round(level * 100));
   }
@@ -219,6 +226,8 @@ export class FilePlayer {
     this.events = events;
     this.hls = null;
     this.src = null;
+    this.media = null;
+    this.quality = 'auto'; // 'auto' или «не выше N строк» — личная настройка этого устройства
     this.pendingStart = 0;
     this.token = 0;
 
@@ -239,11 +248,13 @@ export class FilePlayer {
   async load(media, start, autoplay) {
     this.reset();
     const token = this.token;
-    this.src = media.url;
+    const url = this.pickUrl(media);
+    this.media = media;
+    this.src = url;
     this.pendingStart = start;
     const video = this.video;
 
-    const isHls = /\.m3u8(\?|#|$)/i.test(new URL(media.url, location.href).pathname);
+    const isHls = /\.m3u8(\?|#|$)/i.test(new URL(url, location.href).pathname);
     if (isHls && !video.canPlayType('application/vnd.apple.mpegurl')) {
       const Hls = await loadHls();
       if (token !== this.token) return;
@@ -252,17 +263,74 @@ export class FilePlayer {
       this.hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.fatal) this.events.onError?.(this, 'HLS-поток недоступен');
       });
-      this.hls.loadSource(media.url);
+      this.hls.on(Hls.Events.MANIFEST_PARSED, () => this.applyHlsCap());
+      this.hls.loadSource(url);
       this.hls.attachMedia(video);
     } else {
-      video.src = media.url;
+      video.src = url;
     }
     if (autoplay) this.play();
+  }
+
+  // --- Качество. Меняется только у этого зрителя: таймлайн у всех версий общий ---
+
+  /** Версия под настройку «не выше N строк»; «Авто» — та, что сервер счёл лучшей. */
+  pickUrl(media) {
+    const variants = media.variants;
+    if (!variants?.length || this.quality === 'auto') return media.url;
+    const fitting = variants.filter((variant) => variant.height <= this.quality); // от большего к меньшему
+    return (fitting[0] ?? variants.at(-1)).url;
+  }
+
+  setQuality(quality) {
+    this.quality = quality;
+    if (this.hls) return this.applyHlsCap();
+    if (!this.media?.variants || !this.src) return;
+    const url = this.pickUrl(this.media);
+    if (url !== this.src) this.switchSource(url);
+  }
+
+  // Другая версия того же видео — с той же секунды и в том же состоянии
+  switchSource(url) {
+    const time = this.time();
+    const wasPlaying = this.isPlaying();
+    this.src = url;
+    this.pendingStart = time;
+    this.video.src = url;
+    if (wasPlaying) this.play();
+  }
+
+  // У HLS-потока качество выбирает сам hls.js под скорость — ограничиваем ему потолок
+  applyHlsCap() {
+    const levels = this.hls?.levels ?? [];
+    if (!levels.length) return;
+    if (this.quality === 'auto') {
+      this.hls.autoLevelCapping = -1;
+      return;
+    }
+    const byHeight = levels.map((level, index) => ({ index, height: level.height ?? 0 })).sort((a, b) => b.height - a.height);
+    this.hls.autoLevelCapping = (byHeight.find((level) => level.height <= this.quality) ?? byHeight.at(-1)).index;
+  }
+
+  /** Высоты, из которых можно выбрать (от большей к меньшей), или null — выбирать не из чего. */
+  qualityOptions() {
+    const heights = this.hls
+      ? (this.hls.levels ?? []).map((level) => level.height).filter(Boolean)
+      : (this.media?.variants ?? []).map((variant) => variant.height);
+    const unique = [...new Set(heights)].sort((a, b) => b - a);
+    return unique.length > 1 ? unique : null;
+  }
+
+  currentHeight() {
+    if (this.hls) return this.hls.levels?.[this.hls.currentLevel]?.height ?? null;
+    const variant = this.media?.variants?.find((item) => item.url === this.src);
+    return variant?.height ?? (this.video.videoHeight || null);
   }
 
   reset() {
     this.token += 1;
     this.src = null;
+    this.media = null;
     this.hls?.destroy();
     this.hls = null;
     this.video.removeAttribute('src');

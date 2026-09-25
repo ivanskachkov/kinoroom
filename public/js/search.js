@@ -211,6 +211,7 @@ export function createSearch({ sources, onPlay, onQueue }) {
         thumb: data.thumb,
         source: 'archive',
         duration: file.duration,
+        variants: file.variants,
         fileTitle: file.title,
       })),
     };

@@ -475,6 +475,19 @@ h1, h2, h3, h4, p { margin: 0; }
 .overlay-chat .input { height: 40px; background: rgb(255 255 255 / .12); border-color: rgb(255 255 255 / .15); color: #fff; }
 .overlay-chat .input::placeholder { color: rgb(255 255 255 / .6); }
 .btn-chat { display: none; }
+.quality-wrap { position: relative; display: flex; }
+.controls .btn-quality { width: auto; min-width: 38px; padding: 0 8px; color: #fff; font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.quality-menu {
+  position: absolute; right: 0; bottom: 46px; z-index: 7;
+  display: flex; flex-direction: column; gap: 2px; min-width: 180px; max-width: 260px; padding: 8px;
+  border: 1px solid rgb(255 255 255 / .12); border-radius: 12px; background: rgb(14 15 19 / .96); box-shadow: var(--shadow);
+}
+.qm-title { padding: 4px 8px 6px; font-size: 12px; font-weight: 700; color: rgb(255 255 255 / .65); }
+.qm-option { padding: 7px 10px; border: 0; border-radius: 8px; background: transparent; color: #fff; font-size: 14px; text-align: left; }
+.qm-option:hover { background: rgb(255 255 255 / .1); }
+.qm-option.is-active { color: var(--accent); font-weight: 700; }
+.qm-hint { padding: 0 8px 4px; font-size: 12.5px; line-height: 1.45; color: rgb(255 255 255 / .75); }
+.player:has(.quality-menu:not([hidden])) .controls { opacity: 1; }
 .controls .btn-cc { color: rgb(255 255 255 / .55); }
 .controls .btn-cc.is-on { color: #fff; box-shadow: inset 0 -2px 0 var(--accent); }
 .player.is-fullscreen .btn-chat { display: inline-grid; }

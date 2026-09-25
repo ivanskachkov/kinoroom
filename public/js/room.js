@@ -248,6 +248,7 @@ const ui = {
   volume: $('#volume'),
   fullscreen: $('#btn-fullscreen'),
   cc: $('#btn-cc'),
+  quality: $('#btn-quality'),
 };
 
 function sendControl(action, position) {
@@ -299,6 +300,8 @@ function updateControls() {
   playerEl.classList.toggle('is-empty', !state.media);
   ui.next.hidden = state.queue.length === 0;
   ui.cc.hidden = state.media?.kind !== 'youtube';
+  ui.quality.hidden = !state.media;
+  if (state.media) $('#quality-label').textContent = currentQualityLabel();
 
   const duration = active?.duration() || state.media?.duration || 0;
   const current = scrubbing ? Number(ui.seek.value) : state.media ? currentTime() : 0;
@@ -352,6 +355,55 @@ ui.cc.addEventListener('click', () => {
   applyCaptions();
 });
 applyCaptions();
+
+// Качество — тоже личная настройка устройства: у каждого зрителя своё, синхронизация не страдает
+let qualityPref = storage.get('kr_quality', 'auto');
+file.setQuality(qualityPref);
+const qualityMenu = $('#quality-menu');
+const heightLabel = (height) => (height >= 2160 ? '4K' : `${height}p`);
+
+function currentQualityLabel() {
+  if (active === youtube) return youtube.qualityLabel() ?? 'Авто';
+  const height = active === file ? file.currentHeight() : null;
+  return height ? heightLabel(height) : 'Авто';
+}
+
+function renderQualityMenu() {
+  if (state.media?.kind === 'youtube') {
+    qualityMenu.replaceChildren(
+      el('div', { class: 'qm-title' }, `Сейчас: ${youtube.qualityLabel() ?? 'подбирается'}`),
+      el('p', { class: 'qm-hint' }, 'YouTube сам подбирает качество под скорость интернета каждого устройства. Выбрать его вручную во встроенном плеере нельзя — YouTube это отключил.'),
+    );
+    return;
+  }
+  const heights = file.qualityOptions();
+  if (!heights) {
+    qualityMenu.replaceChildren(
+      el('div', { class: 'qm-title' }, `Сейчас: ${currentQualityLabel()}`),
+      el('p', { class: 'qm-hint' }, 'У этого видео одна версия — выбирать не из чего.'),
+    );
+    return;
+  }
+  const current = qualityPref === 'auto' ? 'auto' : file.currentHeight();
+  const option = (value, label) =>
+    el('button', { class: value === current ? 'qm-option is-active' : 'qm-option', type: 'button', onclick: () => chooseQuality(value) }, label);
+  qualityMenu.replaceChildren(el('div', { class: 'qm-title' }, 'Качество — только у вас'), option('auto', 'Авто'), ...heights.map((h) => option(h, heightLabel(h))));
+}
+
+function chooseQuality(value) {
+  qualityPref = value;
+  storage.set('kr_quality', value);
+  file.setQuality(value);
+  qualityMenu.hidden = true;
+}
+
+ui.quality.addEventListener('click', () => {
+  if (qualityMenu.hidden) renderQualityMenu();
+  qualityMenu.hidden = !qualityMenu.hidden;
+});
+document.addEventListener('pointerdown', (event) => {
+  if (!qualityMenu.hidden && !event.target.closest('.quality-wrap')) qualityMenu.hidden = true;
+});
 
 function isFullscreen() {
   return (document.fullscreenElement ?? document.webkitFullscreenElement) === playerEl || playerEl.classList.contains('pseudo-fullscreen');
