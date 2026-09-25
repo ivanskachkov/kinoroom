@@ -23,11 +23,16 @@
     </form>
 
     <div class="room-meta">
+      <span class="room-title">
+        <span id="room-lock" class="room-lock" title="Комната с паролем" hidden><i data-icon="lock" data-size="14"></i></span>
+        <span id="room-name" class="room-name"></span>
+      </span>
+      <button id="room-settings-btn" class="icon-btn" type="button" title="Настройки комнаты" aria-label="Настройки комнаты" hidden><i data-icon="settings"></i></button>
       <div id="members-wrap" class="members-wrap" title="Участники" role="button" tabindex="0">
         <div id="members" class="members"></div>
         <span class="members-count"><i data-icon="users" data-size="16"></i><span id="members-count">0</span></span>
       </div>
-      <button id="copy-link" class="btn btn-ghost" type="button" title="Скопировать ссылку на комнату">
+      <button id="copy-link" class="btn btn-ghost" type="button" title="Скопировать ссылку-приглашение: по ней входят без пароля">
         <i data-icon="link" data-size="16"></i><span id="room-code" class="room-code"></span>
       </button>
     </div>
@@ -48,19 +53,25 @@
 
         <div id="click-layer" class="click-layer"></div>
         <div id="reactions-layer" class="reactions-layer" aria-hidden="true"></div>
+        <div id="chat-overlay" class="chat-overlay" aria-hidden="true"></div>
+        <form id="overlay-chat" class="overlay-chat" hidden>
+          <input id="overlay-chat-input" class="input" placeholder="Сообщение…" maxlength="500" autocomplete="off" enterkeyhint="send" aria-label="Сообщение">
+          <button class="icon-btn icon-btn-accent" type="submit" aria-label="Отправить"><i data-icon="send" data-size="18"></i></button>
+        </form>
         <div id="connection" class="connection" hidden>Нет связи с сервером — переподключаемся…</div>
         <div id="player-notice" class="player-notice" hidden></div>
 
         <div class="controls">
-          <input id="seek" class="range seek" type="range" min="0" max="1" step="0.1" value="0" aria-label="Перемотка" disabled>
+          <input id="seek" class="range seek" type="range" min="0" max="1" step="0.1" value="0" aria-label="Перемотка" title="Перемотка: ← → или J L — на 10 секунд" disabled>
           <div class="controls-row">
-            <button id="btn-play" class="icon-btn" type="button" aria-label="Смотреть"></button>
+            <button id="btn-play" class="icon-btn" type="button" aria-label="Смотреть" title="Смотреть / пауза (пробел или K)"></button>
             <button id="btn-next" class="icon-btn" type="button" aria-label="Следующее в очереди" title="Следующее в очереди" hidden><i data-icon="next" data-size="22"></i></button>
-            <button id="btn-mute" class="icon-btn" type="button" aria-label="Звук"></button>
+            <button id="btn-mute" class="icon-btn" type="button" aria-label="Звук" title="Звук (M)"></button>
             <input id="volume" class="range volume" type="range" min="0" max="1" step="0.05" aria-label="Громкость">
             <span id="time" class="time"></span>
             <span class="spacer"></span>
             <span id="sync" class="sync" data-state="idle"><span id="sync-label" class="sync-label"></span></span>
+            <button id="btn-chat" class="icon-btn btn-chat" type="button" aria-label="Написать в чат" title="Написать в чат (C)"><i data-icon="chat" data-size="20"></i></button>
             <button id="btn-fullscreen" class="icon-btn" type="button" aria-label="Полный экран" title="Полный экран (F)"><i data-icon="fullscreen" data-size="20"></i></button>
           </div>
         </div>
@@ -92,6 +103,7 @@
       <div id="panel-chat" class="panel" role="tabpanel">
         <ul id="chat-list" class="chat-list" aria-live="polite"></ul>
         <form id="chat-form" class="chat-form">
+          <button id="chat-sound" class="icon-btn" type="button" hidden></button>
           <input id="chat-input" class="input" placeholder="Сообщение…" maxlength="500" autocomplete="off" enterkeyhint="send" aria-label="Сообщение">
           <button class="icon-btn icon-btn-accent" type="submit" aria-label="Отправить"><i data-icon="send" data-size="20"></i></button>
         </form>
@@ -106,6 +118,7 @@
             <span id="voice-status" class="voice-status"></span>
           </div>
           <button id="mic-toggle" class="btn btn-primary mic-toggle" type="button"></button>
+          <button id="mic-test" class="btn btn-ghost btn-sm" type="button" title="Запишет 4 секунды и проиграет — ровно так вас слышат другие"><i data-icon="headphones" data-size="16"></i><span id="mic-test-label">Проверить, как меня слышно</span></button>
           <div id="mic-meter" class="mic-meter" hidden title="Уровень вашего микрофона. Левее метки — вас не слышно"><span id="mic-meter-fill"></span><i id="mic-threshold" class="mic-threshold"></i></div>
           <label id="voice-gate-row" class="voice-row voice-row-stack" hidden>
             <span>Отсечка шума — двигайте метку правее, пока фон в тишине не окажется левее неё</span>
@@ -141,8 +154,34 @@
       <h2>Вход в комнату</h2>
       <p class="muted">Как вас будут видеть другие участники?</p>
       <input id="join-name" class="input" maxlength="24" placeholder="Ваше имя" autocomplete="nickname" required>
+      <div id="join-password-row" class="stack" hidden>
+        <p class="muted">🔒 Комната защищена паролем. Введите его — или попросите у друзей ссылку-приглашение, по ней пароль не нужен.</p>
+        <input id="join-password" class="input" type="password" maxlength="100" placeholder="Пароль комнаты" autocomplete="off">
+      </div>
       <p id="join-error" class="error-text"></p>
       <button class="btn btn-primary btn-lg" type="submit">Войти</button>
+    </form>
+  </div>
+
+  <div id="room-settings" class="modal" hidden>
+    <form id="room-settings-form" class="modal-card">
+      <h2>Настройки комнаты</h2>
+      <label class="field">
+        <span>Название</span>
+        <input id="rs-name" class="input" maxlength="60" required>
+      </label>
+      <label class="field">
+        <span id="rs-password-label">Пароль</span>
+        <input id="rs-password" class="input" type="password" maxlength="100" autocomplete="new-password">
+      </label>
+      <label id="rs-remove-row" class="check"><input id="rs-remove-password" type="checkbox"> Убрать пароль</label>
+      <label class="check"><input id="rs-listed" type="checkbox"> Показывать в общем списке комнат</label>
+      <label class="check"><input id="rs-rotate" type="checkbox"> Сделать новую ссылку-приглашение — старые перестанут работать</label>
+      <p id="rs-error" class="error-text"></p>
+      <div class="modal-actions">
+        <button id="rs-cancel" class="btn btn-ghost" type="button">Отмена</button>
+        <button class="btn btn-primary" type="submit">Сохранить</button>
+      </div>
     </form>
   </div>
 

@@ -35,6 +35,21 @@
           <span>Ваше имя</span>
           <input id="name" class="input" maxlength="24" placeholder="Как вас называть?" autocomplete="nickname" required>
         </label>
+        <details class="create-more">
+          <summary>Название и пароль комнаты</summary>
+          <div class="stack">
+            <label class="field">
+              <span>Название</span>
+              <input id="room-name" class="input" maxlength="60" placeholder="Например, «Кино по пятницам»" autocomplete="off">
+            </label>
+            <label class="field">
+              <span>Пароль — необязательно</span>
+              <input id="room-password" class="input" type="password" maxlength="100" placeholder="Без пароля войдёт любой" autocomplete="new-password">
+            </label>
+            <p class="hint-sm">Друзья войдут и без пароля — по ссылке-приглашению из кнопки с кодом комнаты.</p>
+            <label class="check"><input id="room-listed" type="checkbox" checked> Показывать в общем списке комнат</label>
+          </div>
+        </details>
         <button class="btn btn-primary btn-lg" type="submit"><i data-icon="plus" data-size="18"></i>Создать комнату</button>
       </form>
 
@@ -45,6 +60,14 @@
         <button class="btn btn-ghost" type="submit">Войти</button>
       </form>
       <p id="code-error" class="error-text"></p>
+
+      <section class="rooms">
+        <div class="rooms-head">
+          <h2>Комнаты</h2>
+          <input id="rooms-search" class="input input-sm" type="search" placeholder="Найти по названию или фильму" autocomplete="off" aria-label="Поиск комнат">
+        </div>
+        <ul id="rooms-list" class="rooms-list"></ul>
+      </section>
 
       <section id="recent" class="recent" hidden>
         <h2>Недавние комнаты</h2>

@@ -30,6 +30,9 @@ app.get('/api/config', (req, res) => {
     sources: { tmdb: Boolean(config.tmdbKey), youtube: Boolean(config.youtubeKey), archive: true, library: Boolean(config.mediaDir) },
   });
 });
+app.get('/api/rooms', (req, res) => {
+  res.set('cache-control', 'no-store').json({ rooms: rooms.list(req.query.q) });
+});
 app.get('/api/ice', async (req, res) => {
   res.set('cache-control', 'no-store').json({ iceServers: await getIceServers() });
 });

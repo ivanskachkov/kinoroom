@@ -29,7 +29,9 @@ export function createVoice({ socket, onChange }) {
 
   let micStream = null; // сам микрофон — его слушает индикатор уровня
   let localStream = null; // то, что уходит слушателям: копия дорожки, которую выключает шумовой порог
+  let live = false; // объявлены говорящим — нас слышат (микрофон может быть открыт и только для проверки)
   let starting = false;
+  let testing = false;
   let gateThreshold = storage.get('kr_voice_gate', DEFAULT_GATE);
   let gateOpen = false;
   let gateTimer = null;
@@ -219,23 +221,28 @@ export function createVoice({ socket, onChange }) {
     for (const id of res.listeners ?? []) callListener(id).catch((err) => console.warn('[voice]', err));
   }
 
+  async function openMic() {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false,
+    });
+    // Выключать саму дорожку микрофона нельзя: индикатор замолчит, и порог больше не откроется
+    const sendTrack = micStream.getAudioTracks()[0].clone();
+    sendTrack.enabled = false;
+    localStream = new MediaStream([sendTrack]);
+    startMeter(micStream);
+    startGate();
+  }
+
   async function start() {
     if (!supported) throw new Error('Микрофон работает только по HTTPS (или на localhost)');
-    if (localStream || starting) return;
+    if (live || starting) return;
     starting = true;
     onChange();
     try {
-      micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        video: false,
-      });
-      // Выключать саму дорожку микрофона нельзя: индикатор замолчит, и порог больше не откроется
-      const sendTrack = micStream.getAudioTracks()[0].clone();
-      sendTrack.enabled = false;
-      localStream = new MediaStream([sendTrack]);
-      startMeter(micStream);
-      startGate();
+      if (!localStream) await openMic();
       await announce();
+      live = true;
     } catch (err) {
       stopLocal();
       throw new Error(MIC_ERRORS[err?.name] ?? err?.message ?? 'Не удалось включить микрофон');
@@ -251,23 +258,60 @@ export function createVoice({ socket, onChange }) {
     for (const stream of [localStream, micStream]) stream?.getTracks().forEach((track) => track.stop());
     localStream = null;
     micStream = null;
+    live = false;
     meter?.context.close().catch(() => {});
     meter = null;
     onChange();
   }
 
   function stop() {
-    if (!localStream) return;
+    if (!live) return;
     socket.emit('voice:stop');
     stopLocal();
+  }
+
+  /** Записывает несколько секунд того, что уходит слушателям (после шумового порога), и отдаёт запись. */
+  async function testMic(seconds = 4) {
+    if (!supported || !window.MediaRecorder) throw new Error('Этот браузер не умеет записывать звук');
+    if (testing) return null;
+    testing = true;
+    onChange();
+    const temporary = !localStream; // микрофон был выключен — открываем только на время проверки, в эфир не выходим
+    try {
+      if (temporary) await openMic();
+      const recorder = new MediaRecorder(localStream);
+      const chunks = [];
+      recorder.ondataavailable = (event) => event.data.size && chunks.push(event.data);
+      const stopped = new Promise((resolve) => (recorder.onstop = resolve));
+      recorder.start();
+      await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+      recorder.stop();
+      await stopped;
+      return new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+    } catch (err) {
+      throw new Error(MIC_ERRORS[err?.name] ?? err?.message ?? 'Не удалось проверить микрофон');
+    } finally {
+      if (temporary && !live) stopLocal();
+      testing = false;
+      onChange();
+    }
   }
 
   return {
     supported,
     start,
     stop,
+    testMic,
+    /** В эфире — нас слышат. */
     get active() {
+      return live;
+    },
+    /** Микрофон открыт: в эфире или идёт проверка. */
+    get micOpen() {
       return Boolean(localStream);
+    },
+    get testing() {
+      return testing;
     },
     get starting() {
       return starting;
@@ -278,7 +322,7 @@ export function createVoice({ socket, onChange }) {
 
     /** После переподключения к комнате снова объявляем себя говорящим. */
     async resume() {
-      if (localStream) await announce().catch((err) => console.warn('[voice]', err));
+      if (live) await announce().catch((err) => console.warn('[voice]', err));
     },
 
     /** Браузер не дал включить звук без клика — повторяем воспроизведение из обработчика клика. */

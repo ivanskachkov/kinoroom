@@ -33,6 +33,11 @@ const ICONS = {
   send: '<path d="M4.5 12L20 4.5l-4 15-4.2-5.8z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><path d="M11.8 13.7L20 4.5" stroke="currentColor" stroke-width="1.8"/>',
   mic: '<rect x="9" y="3.5" width="6" height="11" rx="3" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/>',
   micOff: '<rect x="9" y="3.5" width="6" height="11" rx="3" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5M4 4l16 16" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/>',
+  settings: '<circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M12 3.5v2.2M12 18.3v2.2M20.5 12h-2.2M5.7 12H3.5M18 6l-1.6 1.6M7.6 16.4 6 18M18 18l-1.6-1.6M7.6 7.6 6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" stroke="currentColor" stroke-width="1.8" fill="none"/>',
+  bell: '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><path d="M10 20.5a2 2 0 0 0 4 0" stroke="currentColor" stroke-width="1.8" fill="none"/>',
+  bellOff: '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  headphones: '<path d="M4 15v-3a8 8 0 0 1 16 0v3" stroke="currentColor" stroke-width="1.8" fill="none"/><rect x="3.5" y="14" width="4.5" height="6.5" rx="1.5" stroke="currentColor" stroke-width="1.8" fill="none"/><rect x="16" y="14" width="4.5" height="6.5" rx="1.5" stroke="currentColor" stroke-width="1.8" fill="none"/>',
   folder: '<path d="M3.5 7a1.5 1.5 0 0 1 1.5-1.5h4.2l2 2H19a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/>',
 };
 

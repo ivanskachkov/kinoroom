@@ -8,7 +8,11 @@ hydrateIcons();
 
 const roomId = normalizeRoomId(decodeURIComponent(location.pathname.split('/').filter(Boolean).pop() ?? ''));
 if (!roomId) location.replace('/');
-if (location.pathname !== `/r/${roomId}`) history.replaceState(null, '', `/r/${roomId}${location.search}`);
+// Ссылка-приглашение (?i=…) пускает без пароля. Запоминаем её и убираем из адресной строки:
+// делиться комнатой — через кнопку с кодом, а не копированием адреса
+const inviteParam = new URLSearchParams(location.search).get('i');
+if (inviteParam) storage.set(`kr_invite:${roomId}`, inviteParam);
+if (location.pathname !== `/r/${roomId}` || location.search) history.replaceState(null, '', `/r/${roomId}`);
 document.title = `Комната ${roomId} · KinoRoom`;
 $('#room-code').textContent = roomId;
 
@@ -29,6 +33,7 @@ const SOFT_DRIFT = 0.25; // ближе этого — считаем, что в�
 
 const state = {
   me: null,
+  room: { name: '', locked: false, listed: true, invite: null, isOwner: false },
   media: null,
   playback: { playing: false, position: 0, updatedAt: 0 },
   queue: [],
@@ -332,17 +337,69 @@ ui.mute.addEventListener('click', () => {
 });
 applyVolume();
 
+function isFullscreen() {
+  return (document.fullscreenElement ?? document.webkitFullscreenElement) === playerEl || playerEl.classList.contains('pseudo-fullscreen');
+}
+
 function toggleFullscreen() {
   const current = document.fullscreenElement ?? document.webkitFullscreenElement;
   if (current) return (document.exitFullscreen ?? document.webkitExitFullscreen).call(document);
-  if (playerEl.classList.contains('pseudo-fullscreen')) return playerEl.classList.remove('pseudo-fullscreen');
+  if (playerEl.classList.contains('pseudo-fullscreen')) {
+    playerEl.classList.remove('pseudo-fullscreen');
+    return syncFullscreen();
+  }
   // На iPhone полноэкранный режим есть только у самого <video>, поэтому растягиваем плеер стилями.
-  const pseudo = () => playerEl.classList.add('pseudo-fullscreen');
+  const pseudo = () => {
+    playerEl.classList.add('pseudo-fullscreen');
+    syncFullscreen();
+  };
   const request = playerEl.requestFullscreen ?? playerEl.webkitRequestFullscreen;
   if (!request) return pseudo();
   request.call(playerEl)?.catch?.(pseudo);
 }
 ui.fullscreen.addEventListener('click', toggleFullscreen);
+
+// В полноэкранном режиме боковой панели не видно — новые сообщения всплывают поверх видео,
+// а ответить можно, не выходя из него (кнопка чата на панели управления).
+const chatOverlay = $('#chat-overlay');
+const overlayForm = $('#overlay-chat');
+
+function syncFullscreen() {
+  const fullscreen = isFullscreen();
+  playerEl.classList.toggle('is-fullscreen', fullscreen);
+  if (!fullscreen) {
+    overlayForm.hidden = true;
+    chatOverlay.replaceChildren();
+  }
+}
+document.addEventListener('fullscreenchange', syncFullscreen);
+document.addEventListener('webkitfullscreenchange', syncFullscreen);
+
+function showOverlayMessage(msg) {
+  const node = msg.type === 'system'
+    ? el('div', { class: 'ov-msg ov-system' }, msg.text)
+    : el('div', { class: 'ov-msg' }, el('b', { style: { color: msg.color } }, msg.name), ' ', msg.text);
+  chatOverlay.append(node);
+  while (chatOverlay.children.length > 5) chatOverlay.firstElementChild.remove();
+  setTimeout(() => {
+    node.classList.add('is-leaving');
+    setTimeout(() => node.remove(), 500);
+  }, msg.type === 'system' ? 5000 : 9000);
+}
+
+function toggleOverlayChat() {
+  overlayForm.hidden = !overlayForm.hidden;
+  if (!overlayForm.hidden) $('#overlay-chat-input').focus();
+}
+$('#btn-chat').addEventListener('click', toggleOverlayChat);
+overlayForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const input = $('#overlay-chat-input');
+  if (sendChat(input.value)) input.value = '';
+});
+$('#overlay-chat-input').addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') overlayForm.hidden = true;
+});
 
 // Клик по видео — пауза/продолжение, двойной клик — полный экран. На телефоне тап показывает панель.
 const coarsePointer = matchMedia('(hover: none)').matches;
@@ -374,10 +431,12 @@ $('.controls').addEventListener('pointerdown', showControlsBriefly);
 
 document.addEventListener('keydown', (event) => {
   if (event.target.closest?.('input, textarea, select, [contenteditable]') || event.ctrlKey || event.metaKey || event.altKey) return;
-  if (!$('#join').hidden || !$('#search-panel').hidden) return;
+  if (!$('#join').hidden || !$('#search-panel').hidden || !$('#room-settings').hidden) return;
+  // Зажатая клавиша повторяется — без этой проверки F мигал бы полноэкранным режимом, а K паузой
+  if (event.repeat) return;
   // Иначе пробел «нажмёт» кнопку, на которой остался фокус (например, реакцию).
   if (event.code === 'Space' && event.target.closest?.('button')) event.target.blur();
-  // event.code не зависит от раскладки: K работает и когда включена кириллица.
+  // Раскладка как на YouTube. event.code не зависит от языка: K работает и на кириллице.
   const actions = {
     Space: togglePlay,
     KeyK: togglePlay,
@@ -387,6 +446,7 @@ document.addEventListener('keydown', (event) => {
     KeyL: () => seekBy(10),
     KeyF: toggleFullscreen,
     KeyM: () => ui.mute.click(),
+    KeyC: () => (isFullscreen() ? toggleOverlayChat() : (selectTab('chat'), $('#chat-input').focus())),
     Slash: () => $('#search-input').focus(),
   };
   const action = actions[event.code];
@@ -526,16 +586,63 @@ function appendChat(msg) {
     unread += 1;
     $('#chat-badge').textContent = unread;
   }
+  if (isFullscreen()) showOverlayMessage(msg);
+  if (msg.type === 'user' && msg.userId !== state.me?.id) playMessageSound();
+}
+
+function sendChat(raw) {
+  const text = raw.trim();
+  if (!text) return false;
+  socket.emit('chat:send', { text });
+  return true;
 }
 
 $('#chat-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const input = $('#chat-input');
-  const text = input.value.trim();
-  if (!text) return;
-  socket.emit('chat:send', { text });
-  input.value = '';
+  if (sendChat(input.value)) input.value = '';
 });
+
+// Звук новых сообщений — только на компьютере: на телефоне уведомления и так видны поверх видео
+const finePointer = matchMedia('(hover: hover) and (pointer: fine)').matches;
+let chatSound = storage.get('kr_chat_sound', true);
+let soundContext = null;
+
+function playMessageSound() {
+  if (!finePointer || !chatSound) return;
+  try {
+    soundContext ??= new AudioContext();
+    if (soundContext.state === 'suspended') soundContext.resume();
+    const now = soundContext.currentTime;
+    // Короткое «динь-дон»: два тона с плавным затуханием, чтобы не щёлкало
+    for (const [freq, start] of [[880, 0], [1320, 0.1]]) {
+      const osc = soundContext.createOscillator();
+      const gain = soundContext.createGain();
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, now + start);
+      gain.gain.exponentialRampToValueAtTime(0.08, now + start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + start + 0.3);
+      osc.connect(gain).connect(soundContext.destination);
+      osc.start(now + start);
+      osc.stop(now + start + 0.32);
+    }
+  } catch {}
+}
+
+const soundButton = $('#chat-sound');
+function renderSoundButton() {
+  soundButton.replaceChildren(icon(chatSound ? 'bell' : 'bellOff', 18));
+  soundButton.title = chatSound ? 'Звук новых сообщений включён' : 'Звук новых сообщений выключен';
+  soundButton.setAttribute('aria-label', soundButton.title);
+}
+soundButton.hidden = !finePointer;
+soundButton.addEventListener('click', () => {
+  chatSound = !chatSound;
+  storage.set('kr_chat_sound', chatSound);
+  renderSoundButton();
+  if (chatSound) playMessageSound();
+});
+renderSoundButton();
 
 function selectTab(name) {
   for (const tab of document.querySelectorAll('[data-tab]')) tab.setAttribute('aria-selected', String(tab.dataset.tab === name));
@@ -587,8 +694,10 @@ function renderVoice() {
   micButtons.quick.title = label;
   micButtons.quick.setAttribute('aria-label', label);
   micButtons.quick.disabled = starting;
-  $('#mic-meter').hidden = !active;
-  $('#voice-gate-row').hidden = !active;
+  // Шкала и отсечка видны и во время проверки микрофона — чтобы настроить порог до выхода в эфир
+  $('#mic-meter').hidden = !voice.micOpen;
+  $('#voice-gate-row').hidden = !voice.micOpen;
+  $('#mic-test').disabled = voice.testing || starting || !voice.supported;
   $('#voice-unlock').hidden = !voice.audioBlocked;
   $('#voice-status').textContent = active ? `в эфире · слушателей: ${voice.connectedCount()}` : '';
   if (!voice.supported) {
@@ -597,6 +706,46 @@ function renderVoice() {
 }
 
 micButtons.toggle.addEventListener('click', toggleMic);
+
+// Самопроверка: 4 секунды записи того, что уходит слушателям, и сразу воспроизведение.
+// Так слышно всё, что мешает: звук фильма из колонок, эхо, обрывы из-за слишком высокой отсечки.
+const TEST_SECONDS = 4;
+$('#mic-test').addEventListener('click', async () => {
+  const label = $('#mic-test-label');
+  const reset = () => (label.textContent = 'Проверить, как меня слышно');
+  let left = TEST_SECONDS;
+  let heard = false;
+  label.textContent = `Говорите… ${left}`;
+  const countdown = setInterval(() => {
+    left -= 1;
+    if (left > 0) label.textContent = `Говорите… ${left}`;
+  }, 1000);
+  const watch = setInterval(() => (heard ||= voice.gateOpen), 100);
+  let recording = null;
+  try {
+    recording = await voice.testMic(TEST_SECONDS);
+  } catch (err) {
+    toast(err.message, { error: true });
+  } finally {
+    clearInterval(countdown);
+    clearInterval(watch);
+  }
+  if (!recording) return reset();
+  if (!heard) {
+    toast('Вас не было слышно: микрофон слишком тихий или метка отсечки шума сдвинута слишком далеко вправо', { error: true });
+    return reset();
+  }
+  label.textContent = 'Воспроизвожу — так вас слышат';
+  const url = URL.createObjectURL(recording);
+  const audio = new Audio(url);
+  const done = () => {
+    URL.revokeObjectURL(url);
+    reset();
+  };
+  audio.onended = done;
+  audio.onerror = done;
+  audio.play().catch(done);
+});
 micButtons.quick.addEventListener('click', () => {
   if (!voice.supported) {
     selectTab('people');
@@ -689,8 +838,11 @@ $('#empty-search').addEventListener('click', () => $('#search-input').focus());
 // ---------------------------------------------------------------------------
 
 $('#copy-link').addEventListener('click', async () => {
-  const ok = await copyText(location.origin + location.pathname);
-  toast(ok ? 'Ссылка на комнату скопирована — отправьте её друзьям' : 'Не получилось скопировать — скопируйте адрес из строки браузера');
+  const invite = state.room.invite;
+  const url = `${location.origin}/r/${roomId}${invite ? `?i=${encodeURIComponent(invite)}` : ''}`;
+  const ok = await copyText(url);
+  if (!ok) return toast(`Не получилось скопировать. Ссылка: ${url}`, { error: true });
+  toast(state.room.locked ? 'Ссылка-приглашение скопирована — по ней войдут без пароля' : 'Ссылка на комнату скопирована — отправьте её друзьям');
 });
 
 function applyState(snapshot) {
@@ -712,34 +864,73 @@ function applyState(snapshot) {
   }
 }
 
+let joinPassword = '';
+
 async function join() {
   let res;
   try {
-    res = await socket.timeout(8000).emitWithAck('room:join', { roomId, name: myName, clientId });
+    res = await socket.timeout(8000).emitWithAck('room:join', {
+      roomId,
+      name: myName,
+      clientId,
+      invite: storage.get(`kr_invite:${roomId}`),
+      ownerKey: storage.get(`kr_owner:${roomId}`),
+      password: joinPassword || undefined,
+    });
   } catch {
     res = { error: 'Сервер не отвечает' };
   }
-  if (res.error) return showJoin(res.error);
+  if (res.error) return showJoin(res.error, res.needPassword);
 
+  joinPassword = '';
   joined = true;
   state.me = res.you;
+  if (res.room.ownerKey) storage.set(`kr_owner:${roomId}`, res.room.ownerKey);
   $('#join').hidden = true;
   $('#connection').hidden = true;
-  rememberRoom();
+  applyRoomMeta(res.room);
   applyState(res.state);
+  applyCreationSettings();
   voice.resume();
+}
+
+// Приглашение приходит каждому вошедшему: сохранённое, оно пускает без пароля при следующих входах
+function applyRoomMeta(meta) {
+  state.room = { ...state.room, ...meta };
+  if (meta.invite) storage.set(`kr_invite:${roomId}`, meta.invite);
+  $('#room-name').textContent = state.room.name;
+  $('#room-lock').hidden = !state.room.locked;
+  $('#room-settings-btn').hidden = !state.room.isOwner;
+  document.title = `${state.room.name} · KinoRoom`;
+  rememberRoom();
+}
+socket.on('room:meta', applyRoomMeta);
+
+// Комнату создали на главной с названием и паролем — применяем их, как только стали владельцем
+function applyCreationSettings() {
+  let pending = null;
+  try {
+    pending = JSON.parse(sessionStorage.getItem('kr_new_room') ?? 'null');
+    sessionStorage.removeItem('kr_new_room');
+  } catch {}
+  if (!pending || pending.id !== roomId || !state.room.isOwner) return;
+  socket.emit('room:settings', { name: pending.name || undefined, password: pending.password || undefined, listed: pending.listed }, (res) => {
+    if (res?.error) toast(res.error, { error: true });
+  });
 }
 
 function rememberRoom() {
   const recent = storage.get('kr_recent', []).filter((r) => r.id !== roomId);
-  storage.set('kr_recent', [{ id: roomId, ts: Date.now() }, ...recent].slice(0, 6));
+  storage.set('kr_recent', [{ id: roomId, name: state.room.name, ts: Date.now() }, ...recent].slice(0, 6));
 }
 
-function showJoin(error = '') {
+function showJoin(error = '', needPassword = false) {
   $('#join').hidden = false;
-  $('#join-error').textContent = error;
+  $('#join-password-row').hidden = !needPassword;
+  // Первый раз о пароле говорит сама подсказка, ошибку показываем только после неудачной попытки
+  $('#join-error').textContent = needPassword && !joinPassword ? '' : error;
   $('#join-name').value = myName;
-  $('#join-name').focus();
+  (needPassword && myName ? $('#join-password') : $('#join-name')).focus();
 }
 
 $('#join-form').addEventListener('submit', (event) => {
@@ -748,8 +939,55 @@ $('#join-form').addEventListener('submit', (event) => {
   if (!name) return;
   myName = name;
   storage.set('kr_name', name);
+  joinPassword = $('#join-password').value;
+  $('#join-password').value = '';
   if (socket.connected) join();
   else socket.connect();
+});
+
+// --- Настройки комнаты (только для создателя) ---
+const settingsModal = $('#room-settings');
+
+$('#room-settings-btn').addEventListener('click', () => {
+  const room = state.room;
+  $('#rs-name').value = room.name;
+  $('#rs-password').value = '';
+  $('#rs-password-label').textContent = room.locked ? 'Новый пароль — пусто, чтобы оставить прежний' : 'Пароль — пусто, чтобы комната была открытой';
+  $('#rs-remove-row').hidden = !room.locked;
+  $('#rs-remove-password').checked = false;
+  $('#rs-listed').checked = room.listed;
+  $('#rs-rotate').checked = false;
+  $('#rs-error').textContent = '';
+  settingsModal.hidden = false;
+  $('#rs-name').focus();
+});
+$('#rs-cancel').addEventListener('click', () => (settingsModal.hidden = true));
+settingsModal.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') settingsModal.hidden = true;
+});
+
+$('#room-settings-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const payload = {
+    name: $('#rs-name').value,
+    listed: $('#rs-listed').checked,
+    rotateInvite: $('#rs-rotate').checked,
+    removePassword: $('#rs-remove-password').checked,
+  };
+  const password = $('#rs-password').value;
+  if (password && !payload.removePassword) payload.password = password;
+  let res;
+  try {
+    res = await socket.timeout(8000).emitWithAck('room:settings', payload);
+  } catch {
+    res = { error: 'Сервер не отвечает' };
+  }
+  if (res?.error) {
+    $('#rs-error').textContent = res.error;
+    return;
+  }
+  settingsModal.hidden = true;
+  if (payload.rotateInvite) toast('Старые ссылки больше не работают. Новая — в кнопке с кодом комнаты');
 });
 
 // Часы сверяем до входа: снимок комнаты сразу применяется с правильной позицией,

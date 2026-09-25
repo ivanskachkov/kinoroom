@@ -125,7 +125,7 @@ h1, h2, h3, h4, p { margin: 0; }
 .recent-link {
   display: flex; justify-content: space-between; align-items: center; padding: 10px 14px;
   border-radius: var(--radius-sm); background: var(--surface); border: 1px solid var(--border);
-  text-decoration: none; font-size: 14px; transition: border-color .15s;
+  color: var(--text); text-decoration: none; font-size: 14px; transition: border-color .15s;
 }
 .recent-link:hover { border-color: var(--text-3); }
 
@@ -433,6 +433,70 @@ h1, h2, h3, h4, p { margin: 0; }
 .toast-error { background: #4d1a25; color: #ffd0d8; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
 
+/* ---------- Комната: название, пароль, настройки ---------- */
+
+.room-title { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; min-width: 0; font-weight: 700; font-size: 14px; }
+.room-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-lock { display: inline-grid; color: var(--warn); flex: none; }
+.check { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; color: var(--text-2); cursor: pointer; line-height: 1.4; }
+.check input { width: 16px; height: 16px; margin: 2px 0 0; flex: none; accent-color: var(--accent); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.modal-card .field > span { font-size: 13px; }
+
+/* ---------- Чат поверх видео в полноэкранном режиме ---------- */
+
+.chat-overlay {
+  position: absolute; top: 14px; left: 14px; z-index: 4;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  max-width: min(440px, 70%); pointer-events: none;
+}
+.ov-msg {
+  padding: 6px 11px; border-radius: 12px;
+  background: rgb(0 0 0 / .5); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  color: #fff; font-size: 14px; line-height: 1.35; text-shadow: 0 1px 2px rgb(0 0 0 / .6);
+  overflow-wrap: anywhere; animation: ov-in .25s ease-out; transition: opacity .5s, transform .5s;
+}
+.ov-msg b { font-weight: 700; }
+.ov-system { font-size: 12.5px; color: rgb(255 255 255 / .8); background: rgb(0 0 0 / .35); }
+.ov-msg.is-leaving { opacity: 0; transform: translateY(-6px); }
+@keyframes ov-in { from { opacity: 0; transform: translateX(-10px); } }
+
+.overlay-chat {
+  position: absolute; left: 50%; bottom: 76px; z-index: 6; transform: translateX(-50%);
+  display: flex; gap: 8px; width: min(520px, calc(100% - 24px)); padding: 8px;
+  border-radius: 14px; background: rgb(0 0 0 / .55); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.overlay-chat .input { height: 40px; background: rgb(255 255 255 / .12); border-color: rgb(255 255 255 / .15); color: #fff; }
+.overlay-chat .input::placeholder { color: rgb(255 255 255 / .6); }
+.btn-chat { display: none; }
+.player.is-fullscreen .btn-chat { display: inline-grid; }
+
+/* ---------- Главная: создание комнаты и список комнат ---------- */
+
+.create-more { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 14px; background: var(--surface); }
+.create-more summary { cursor: pointer; font-size: 14px; font-weight: 600; color: var(--text-2); }
+.create-more[open] summary { margin-bottom: 12px; }
+.hint-sm { font-size: 12.5px; color: var(--text-3); margin-top: -4px; }
+.input-sm { height: 34px; font-size: 13px; padding: 0 12px; }
+
+.rooms-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.rooms-head h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); flex: none; }
+.rooms-head .input { max-width: 240px; }
+.rooms-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.room-item {
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface);
+  color: var(--text); text-decoration: none; transition: border-color .15s;
+}
+.room-item:hover { border-color: var(--text-3); }
+.room-item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.room-item-name { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-item-lock { display: inline-grid; color: var(--warn); flex: none; }
+.room-item-sub { font-size: 12.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-item-live { display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 3px 9px; border-radius: 999px; background: rgb(53 208 138 / .15); color: var(--ok); font-size: 12.5px; font-weight: 700; }
+.room-item-time { flex: none; font-size: 12px; color: var(--text-3); }
+.rooms-empty { padding: 14px; text-align: center; font-size: 13px; color: var(--text-3); border: 1px dashed var(--border); border-radius: var(--radius-sm); }
+
 /* ---------- Адаптив ---------- */
 
 @media (max-width: 1100px) {
@@ -447,7 +511,10 @@ h1, h2, h3, h4, p { margin: 0; }
 @media (max-width: 900px) {
   :root { --topbar-h: 56px; }
   .topbar { gap: 10px; padding: 0 max(10px, env(safe-area-inset-right)) 0 max(10px, env(safe-area-inset-left)); }
-  .topbar .logo-text, .topbar .members, .topbar .room-code { display: none; }
+  .topbar .logo-text, .topbar .members, .topbar .room-code, .topbar .room-title { display: none; }
+  .chat-overlay { max-width: 80%; top: 10px; left: 10px; }
+  .ov-msg { font-size: 13px; padding: 5px 10px; }
+  .overlay-chat { bottom: 64px; }
   .members-count { display: inline-flex; }
   #copy-link { width: 40px; padding: 0; }
   .input { font-size: 16px; } /* иначе iPhone приближает страницу при фокусе */
