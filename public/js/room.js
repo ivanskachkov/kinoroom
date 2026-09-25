@@ -27,7 +27,7 @@ const clientId = (() => {
   }
 })();
 
-const SOURCE_LABELS = { youtube: 'YouTube', archive: 'Internet Archive', link: 'Ссылка', library: 'Медиатека', tmdb: 'Трейлер' };
+const SOURCE_LABELS = { youtube: 'YouTube', archive: 'Internet Archive', link: 'Ссылка', library: 'Медиатека', tmdb: 'Трейлер', gdrive: 'Google Диск' };
 const HARD_DRIFT = { youtube: 1.2, file: 2 }; // дальше этого — перематываем
 const SOFT_DRIFT = 0.25; // ближе этого — считаем, что всё синхронно
 
@@ -899,7 +899,8 @@ const search = createSearch({
     toast(items.length === 1 ? `В очереди: ${items[0].title}` : `В очередь добавлено: ${items.length}`);
   },
 });
-$('#empty-search').addEventListener('click', () => $('#search-input').focus());
+// Если подключена папка на Google Диске — сразу показываем свои фильмы, иначе просто поиск
+$('#empty-search').addEventListener('click', () => (sources.gdriveFolder ? search.browseDrive() : $('#search-input').focus()));
 
 // ---------------------------------------------------------------------------
 // Подключение к комнате

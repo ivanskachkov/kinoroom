@@ -27,7 +27,14 @@ app.get('/r/:id', (req, res) => res.sendFile(path.join(ROOT, 'public/room.html')
 
 app.get('/api/config', (req, res) => {
   res.json({
-    sources: { tmdb: Boolean(config.tmdbKey), youtube: Boolean(config.youtubeKey), archive: true, library: Boolean(config.mediaDir) },
+    sources: {
+      tmdb: Boolean(config.tmdbKey),
+      youtube: Boolean(config.youtubeKey),
+      archive: true,
+      library: Boolean(config.mediaDir),
+      gdrive: Boolean(config.gdriveKey),
+      gdriveFolder: Boolean(config.gdriveKey && config.gdriveFolder),
+    },
   });
 });
 app.get('/api/rooms', (req, res) => {

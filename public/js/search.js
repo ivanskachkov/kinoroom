@@ -20,6 +20,13 @@ export function parseLink(text) {
   }
   if (youtubeId && /^[\w-]{11}$/.test(youtubeId)) return { type: 'youtube', id: youtubeId };
 
+  // Google Диск: /file/d/ID/view, open?id=ID, uc?id=ID, drive.usercontent…/download?id=ID
+  if (/^(drive|docs)\.google\.com$|^drive\.usercontent\.google\.com$/.test(host)) {
+    if (url.pathname.includes('/folders/')) return { type: 'gdrive-folder' };
+    const driveId = url.pathname.match(/\/file\/d\/([\w-]{10,})/)?.[1] ?? url.searchParams.get('id');
+    if (driveId) return { type: 'gdrive', id: driveId };
+  }
+
   const archiveId = host === 'archive.org' && url.pathname.match(/^\/(?:details|embed)\/([\w.-]+)/)?.[1];
   if (archiveId) return { type: 'archive', id: archiveId };
 
@@ -117,6 +124,7 @@ export function createSearch({ sources, onPlay, onQueue }) {
 
   function resultsFor(q) {
     const view = el('div', { class: 'search-view' });
+    if (sources.gdriveFolder) view.append(driveSection(q));
     if (sources.tmdb) {
       view.append(section('Фильмы и сериалы', () => api(`/api/search/tmdb?q=${enc(q)}`, { signal: signal() }), (r) => r.results.map(tmdbCard), { layout: 'posters' }));
     }
@@ -190,6 +198,24 @@ export function createSearch({ sources, onPlay, onQueue }) {
       badge: video.live ? 'LIVE' : video.duration ? formatTime(video.duration) : null,
       play: () => onPlay(media),
       queue: () => onQueue(media),
+    });
+  }
+
+  // Ваши фильмы на Google Диске: видео идёт каждому зрителю прямо с серверов Google
+  function driveCard(file) {
+    const media = { kind: 'file', url: file.url, title: file.title, source: 'gdrive', duration: file.duration };
+    return mediaCard({
+      title: file.title,
+      meta: ['Google Диск', file.height ? `${file.height}p` : null].filter(Boolean).join(' · '),
+      badge: file.duration ? formatTime(file.duration) : null,
+      play: () => onPlay(media),
+      queue: () => onQueue(media),
+    });
+  }
+
+  function driveSection(q) {
+    return section('Google Диск', () => api(`/api/search/gdrive${q ? `?q=${enc(q)}` : ''}`, { signal: signal() }), (r) => r.results.map(driveCard), {
+      empty: q ? 'В папке на Диске такого нет' : 'Папка на Диске пуста — загрузите туда фильмы в .mp4',
     });
   }
 
@@ -344,6 +370,21 @@ export function createSearch({ sources, onPlay, onQueue }) {
 
   function linkView(link) {
     const view = el('div', { class: 'search-view' });
+    if (link.type === 'gdrive-folder') {
+      view.append(el('p', { class: 'hint' }, 'Это ссылка на папку. Вставьте ссылку на сам видеофайл — или укажите ID этой папки в GDRIVE_FOLDER_ID на сервере, и все фильмы из неё появятся в поиске.'));
+      return view;
+    }
+    if (link.type === 'gdrive') {
+      if (!sources.gdrive) {
+        view.append(el('p', { class: 'error-text' }, 'Google Диск не подключён: на сервере нужен ключ GDRIVE_API_KEY в .env'));
+        return view;
+      }
+      view.append(el('div', { class: 'grid grid-cards' }, el('div', { class: 'skeleton skeleton-cards' })));
+      api(`/api/gdrive/${enc(link.id)}`, { signal: signal() })
+        .then((file) => view.replaceChildren(el('div', { class: 'grid grid-cards' }, driveCard(file))))
+        .catch((err) => view.replaceChildren(el('p', { class: 'error-text' }, err.message)));
+      return view;
+    }
     if (link.type === 'youtube') {
       const fallback = { id: link.id, title: 'Видео YouTube', channel: 'YouTube', thumb: `https://i.ytimg.com/vi/${link.id}/mqdefault.jpg` };
       const grid = el('div', { class: 'grid grid-cards' }, youtubeCard(fallback));
@@ -370,5 +411,15 @@ export function createSearch({ sources, onPlay, onQueue }) {
     return view;
   }
 
-  return { close, open: (q) => ((input.value = q), run(q)) };
+  /** Все фильмы из папки на Google Диске — без поискового запроса. */
+  function browseDrive() {
+    controller?.abort();
+    controller = new AbortController();
+    panel.hidden = false;
+    $('#search-title').textContent = 'Фильмы на Google Диске';
+    resultsView = el('div', { class: 'search-view' }, driveSection(''));
+    showView(resultsView);
+  }
+
+  return { close, open: (q) => ((input.value = q), run(q)), browseDrive };
 }

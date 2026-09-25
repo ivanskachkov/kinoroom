@@ -264,6 +264,7 @@ h1, h2, h3, h4, p { margin: 0; }
 .tag-youtube, .tag-tmdb { background: rgb(255 48 48 / .16); color: #ff8a8a; }
 .tag-archive { background: rgb(74 179 255 / .15); color: #8fd0ff; }
 .tag-library { background: rgb(53 208 138 / .15); color: #7fe6b6; }
+.tag-gdrive { background: rgb(245 185 66 / .15); color: #f7cf7a; }
 .reactions { display: flex; gap: 6px; flex: none; }
 .reaction-btn {
   display: grid; place-items: center; width: 40px; height: 40px; padding: 0;
