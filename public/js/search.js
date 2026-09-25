@@ -73,9 +73,9 @@ export function createSearch({ sources, onPlay, onQueue }) {
 
   // --- Секции результатов ---------------------------------------------------
 
-  function section(title, load, render, { layout = 'cards', disabled } = {}) {
+  function section(title, load, render, { layout = 'cards', disabled, action = null, empty = 'Ничего не найдено' } = {}) {
     const count = el('span', { class: 'section-count' });
-    const node = el('section', { class: 'search-section' }, el('h3', {}, title, count));
+    const node = el('section', { class: 'search-section' }, el('h3', {}, title, count, action));
     if (!load) {
       node.append(el('p', { class: 'muted' }, disabled));
       return node;
@@ -85,7 +85,7 @@ export function createSearch({ sources, onPlay, onQueue }) {
     load()
       .then((data) => {
         const items = render(data);
-        if (!items.length) return grid.replaceWith(el('p', { class: 'muted' }, 'Ничего не найдено'));
+        if (!items.length) return grid.replaceWith(el('p', { class: 'muted' }, empty));
         count.textContent = items.length;
         grid.replaceChildren(...items);
       })
@@ -100,6 +100,21 @@ export function createSearch({ sources, onPlay, onQueue }) {
     return Array.from({ length: n }, () => el('div', { class: `skeleton skeleton-${layout}` }));
   }
 
+  const NO_FULL_VIDEO = 'Полной версии на YouTube не нашлось — или владелец запретил показывать её на других сайтах, или она недоступна в вашей стране.';
+
+  // Раздел YouTube с переключателем «только полные фильмы» (видео длиннее 20 минут, без трейлеров и обзоров)
+  function youtubeSection(q, long) {
+    const toggle = el('button', { class: 'chip-btn', type: 'button' }, long ? 'Показать все видео' : 'Только полные фильмы');
+    const node = section(
+      long ? 'YouTube — полные фильмы' : 'YouTube',
+      () => api(`/api/search/youtube?q=${enc(q)}${long ? '&long=1' : ''}`, { signal: signal() }),
+      (r) => r.results.map(youtubeCard),
+      { action: toggle, empty: long ? NO_FULL_VIDEO : 'Ничего не найдено' },
+    );
+    toggle.addEventListener('click', () => node.replaceWith(youtubeSection(q, !long)));
+    return node;
+  }
+
   function resultsFor(q) {
     const view = el('div', { class: 'search-view' });
     if (sources.tmdb) {
@@ -109,9 +124,11 @@ export function createSearch({ sources, onPlay, onQueue }) {
       view.append(section('Медиатека', () => api(`/api/search/library?q=${enc(q)}`, { signal: signal() }), (r) => r.results.map(libraryCard)));
     }
     view.append(
-      section('YouTube', sources.youtube && (() => api(`/api/search/youtube?q=${enc(q)}`, { signal: signal() })), (r) => r.results.map(youtubeCard), {
-        disabled: 'Поиск по YouTube выключен: нужен YOUTUBE_API_KEY в .env. Ссылку на видео можно вставить прямо в строку поиска.',
-      }),
+      sources.youtube
+        ? youtubeSection(q, false)
+        : section('YouTube', null, null, {
+            disabled: 'Поиск по YouTube выключен: нужен YOUTUBE_API_KEY в .env. Ссылку на видео можно вставить прямо в строку поиска.',
+          }),
       section('Internet Archive', () => api(`/api/search/archive?q=${enc(q)}`, { signal: signal() }), (r) => r.results.map(archiveCard)),
     );
     view.append(
@@ -272,10 +289,13 @@ export function createSearch({ sources, onPlay, onQueue }) {
         const searchTitle = [d.title, d.year].filter(Boolean).join(' ');
         const archiveTitle = d.originalTitle || d.title;
 
-        const youtubeButton = el('button', { class: 'btn btn-ghost', type: 'button' }, icon('search', 16), 'Искать на YouTube');
+        // Трейлеры уже есть в карточке, поэтому с YouTube ищем именно полную версию
+        const isShow = d.type === 'tv';
+        const youtubeButton = el('button', { class: 'btn btn-primary', type: 'button' }, icon('search', 16), isShow ? 'Найти серии на YouTube' : 'Найти полный фильм на YouTube');
         youtubeButton.addEventListener('click', () => {
           youtubeButton.disabled = true;
-          extra.prepend(section(`YouTube: «${searchTitle}»`, () => api(`/api/search/youtube?q=${enc(searchTitle)}`, { signal: signal() }), (r) => r.results.map(youtubeCard)));
+          const query = `${searchTitle} ${isShow ? 'сериал' : 'фильм'}`;
+          extra.prepend(section(`YouTube — полные видео: «${searchTitle}»`, () => api(`/api/search/youtube?q=${enc(query)}&long=1`, { signal: signal() }), (r) => r.results.map(youtubeCard), { empty: NO_FULL_VIDEO }));
         });
 
         content.replaceChildren(

@@ -369,6 +369,12 @@ h1, h2, h3, h4, p { margin: 0; }
 .search-section h3 { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; color: var(--text-2); font-size: 12.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
 .section-count { padding: 1px 7px; border-radius: 8px; background: var(--surface-2); color: var(--text-3); font-size: 11px; letter-spacing: 0; }
 .section-count:empty { display: none; }
+.chip-btn {
+  margin-left: auto; padding: 4px 11px; border: 1px solid var(--border); border-radius: 999px;
+  background: transparent; color: var(--text-2); font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none;
+  transition: background-color .15s, color .15s;
+}
+.chip-btn:hover { background: var(--surface-2); color: var(--text); }
 .search-section > .muted, .search-section > .error-text { font-size: 14px; }
 .back { margin-top: 4px; }
 
