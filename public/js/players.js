@@ -66,6 +66,7 @@ export class YouTubePlayer {
     this.state = YT_STATE.UNSTARTED;
     this.videoId = null;
     this.cuedAt = 0;
+    this.captions = false;
   }
 
   init() {
@@ -84,6 +85,8 @@ export class YouTubePlayer {
                 onStateChange: (e) => this.handleState(e.data),
                 onError: (e) => this.events.onError?.(this, YT_ERRORS[e.data] ?? 'Ошибка плеера YouTube'),
                 onAutoplayBlocked: () => this.events.onBlocked?.(this),
+                // Модуль субтитров YouTube подгружает сам — сразу приводим его к нашей настройке
+                onApiChange: () => this.applyCaptions(),
               },
             });
           }),
@@ -93,9 +96,34 @@ export class YouTubePlayer {
     return this.ready;
   }
 
+  /**
+   * Субтитры. Кнопки CC у встроенного плеера нет (панель управления своя), а YouTube включает
+   * их сам — по настройкам аккаунта или если язык видео не совпал с языком зрителя.
+   * loadModule/unloadModule нет в документации, но это общепринятый способ управлять ими.
+   */
+  setCaptions(on) {
+    this.captions = on;
+    this.applyCaptions();
+  }
+
+  applyCaptions() {
+    const player = this.player;
+    if (!player?.loadModule) return;
+    try {
+      if (this.captions) player.loadModule('captions');
+      else {
+        player.unloadModule('captions');
+        player.unloadModule('cc');
+      }
+    } catch {}
+  }
+
   handleState(state) {
     this.state = state;
-    if (state === YT_STATE.PLAYING) this.events.onPlaying?.(this);
+    if (state === YT_STATE.PLAYING) {
+      this.applyCaptions(); // при смене видео YouTube снова включает субтитры по своим правилам
+      this.events.onPlaying?.(this);
+    }
     if (state === YT_STATE.ENDED) this.events.onEnded?.(this);
     this.events.onDuration?.(this);
   }

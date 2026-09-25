@@ -247,6 +247,7 @@ const ui = {
   mute: $('#btn-mute'),
   volume: $('#volume'),
   fullscreen: $('#btn-fullscreen'),
+  cc: $('#btn-cc'),
 };
 
 function sendControl(action, position) {
@@ -297,6 +298,7 @@ function updateControls() {
   playerEl.classList.toggle('is-paused', !playing);
   playerEl.classList.toggle('is-empty', !state.media);
   ui.next.hidden = state.queue.length === 0;
+  ui.cc.hidden = state.media?.kind !== 'youtube';
 
   const duration = active?.duration() || state.media?.duration || 0;
   const current = scrubbing ? Number(ui.seek.value) : state.media ? currentTime() : 0;
@@ -336,6 +338,20 @@ ui.mute.addEventListener('click', () => {
   applyVolume();
 });
 applyVolume();
+
+// Субтитры YouTube — личная настройка зрителя, по умолчанию выключены
+let captionsOn = storage.get('kr_captions', false);
+function applyCaptions() {
+  youtube.setCaptions(captionsOn);
+  ui.cc.classList.toggle('is-on', captionsOn);
+  ui.cc.title = captionsOn ? 'Субтитры включены' : 'Субтитры выключены';
+}
+ui.cc.addEventListener('click', () => {
+  captionsOn = !captionsOn;
+  storage.set('kr_captions', captionsOn);
+  applyCaptions();
+});
+applyCaptions();
 
 function isFullscreen() {
   return (document.fullscreenElement ?? document.webkitFullscreenElement) === playerEl || playerEl.classList.contains('pseudo-fullscreen');
