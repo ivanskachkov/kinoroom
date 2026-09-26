@@ -551,11 +551,16 @@ ui.fullscreen.addEventListener('click', toggleFullscreen);
 // а ответить можно, не выходя из него (кнопка чата на панели управления).
 const chatOverlay = $('#chat-overlay');
 const overlayForm = $('#overlay-chat');
+const overlayInput = $('#overlay-chat-input');
+const OVERLAY_LIMIT = 5;
+let recentChat = []; // последние сообщения — показать, на что отвечаешь, даже если они уже погасли
+let overlayPinned = false; // открыта строка ответа — сообщения не гаснут, пока пишешь
 
 function syncFullscreen() {
   const fullscreen = isFullscreen();
   playerEl.classList.toggle('is-fullscreen', fullscreen);
   if (!fullscreen) {
+    overlayPinned = false;
     overlayForm.hidden = true;
     chatOverlay.replaceChildren();
   }
@@ -563,30 +568,57 @@ function syncFullscreen() {
 document.addEventListener('fullscreenchange', syncFullscreen);
 document.addEventListener('webkitfullscreenchange', syncFullscreen);
 
-function showOverlayMessage(msg) {
-  const node = msg.type === 'system'
+function overlayNode(msg) {
+  return msg.type === 'system'
     ? el('div', { class: 'ov-msg ov-system' }, msg.text)
     : el('div', { class: 'ov-msg' }, el('b', { style: { color: msg.color } }, msg.name), ' ', msg.text);
-  chatOverlay.append(node);
-  while (chatOverlay.children.length > 5) chatOverlay.firstElementChild.remove();
-  setTimeout(() => {
+}
+
+function fadeOverlayNode(node, delay) {
+  clearTimeout(node.fadeTimer);
+  node.fadeTimer = setTimeout(() => {
+    if (overlayPinned) return; // погаснет после закрытия строки ответа
     node.classList.add('is-leaving');
     setTimeout(() => node.remove(), 500);
-  }, msg.type === 'system' ? 5000 : 9000);
+  }, delay);
+}
+
+function showOverlayMessage(msg) {
+  const node = overlayNode(msg);
+  chatOverlay.append(node);
+  while (chatOverlay.children.length > OVERLAY_LIMIT) chatOverlay.firstElementChild.remove();
+  fadeOverlayNode(node, msg.type === 'system' ? 5000 : 9000);
+}
+
+function openOverlayChat() {
+  overlayPinned = true;
+  const talk = recentChat.filter((msg) => msg.type === 'user').slice(-OVERLAY_LIMIT);
+  chatOverlay.replaceChildren(...talk.map(overlayNode));
+  overlayForm.hidden = false;
+  overlayInput.focus();
+}
+
+function closeOverlayChat() {
+  overlayPinned = false;
+  overlayForm.hidden = true;
+  overlayInput.blur(); // на телефоне прячет клавиатуру — снова видно фильм
+  for (const node of chatOverlay.children) fadeOverlayNode(node, 4000);
 }
 
 function toggleOverlayChat() {
-  overlayForm.hidden = !overlayForm.hidden;
-  if (!overlayForm.hidden) $('#overlay-chat-input').focus();
+  if (overlayForm.hidden) openOverlayChat();
+  else closeOverlayChat();
 }
 $('#btn-chat').addEventListener('click', toggleOverlayChat);
 overlayForm.addEventListener('submit', (event) => {
   event.preventDefault();
-  const input = $('#overlay-chat-input');
-  if (sendChat(input.value)) input.value = '';
+  if (!sendChat(overlayInput.value)) return;
+  overlayInput.value = '';
+  // На телефоне клавиатура закрывает пол-экрана: отправили — возвращаемся к фильму
+  if (coarsePointer) closeOverlayChat();
 });
-$('#overlay-chat-input').addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') overlayForm.hidden = true;
+overlayInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeOverlayChat();
 });
 
 // Клик по видео — пауза/продолжение, двойной клик — полный экран. На телефоне тап показывает панель.
@@ -772,11 +804,13 @@ function appendChat(msg) {
   chatList.append(chatNode(msg));
   while (chatList.children.length > 200) chatList.firstElementChild.remove();
   if (atBottom || msg.userId === state.me?.id) chatList.scrollTop = chatList.scrollHeight;
-  if ($('#panel-chat').hidden && msg.type === 'user') {
+  recentChat = [...recentChat.slice(-19), msg];
+  // Поверх видео сообщение уже прочитано — не копим его в непрочитанных
+  if (isFullscreen()) showOverlayMessage(msg);
+  else if ($('#panel-chat').hidden && msg.type === 'user') {
     unread += 1;
     $('#chat-badge').textContent = unread;
   }
-  if (isFullscreen()) showOverlayMessage(msg);
   if (msg.type === 'user' && msg.userId !== state.me?.id) playMessageSound();
 }
 
@@ -890,9 +924,42 @@ function renderVoice() {
   $('#mic-test').disabled = voice.testing || starting || !voice.supported;
   $('#voice-unlock').hidden = !voice.audioBlocked;
   $('#voice-status').textContent = active ? `в эфире · слушателей: ${voice.connectedCount()}` : '';
+  const links = voice.links.filter((link) => link.memberId || link.state !== 'connected');
+  $('#voice-links').hidden = !links.length;
+  $('#voice-links').replaceChildren(...links.map(voiceLinkView));
   if (!voice.supported) {
     $('#voice-hint').textContent = 'Слушать голоса можно и так, а включить свой микрофон браузер разрешает только по HTTPS (например, через Cloudflare Tunnel) или на localhost.';
   }
+}
+
+// Строка о каждом голосовом соединении: видно, с кем связь есть, а где звук теряется
+function voiceLinkView(link) {
+  const name = state.members.find((member) => member.id === link.memberId)?.name ?? 'участник';
+  let text = 'соединяемся…';
+  let level = '';
+  if (link.state === 'failed' || link.state === 'disconnected') {
+    text = 'не соединились — сеть не пропускает звук напрямую, нужен TURN-сервер';
+    level = 'bad';
+  } else if (link.state === 'connected') {
+    const route = link.route === 'relay' ? 'через TURN' : 'напрямую';
+    const lost = Math.max(link.loss ?? 0, link.conceal ?? 0);
+    if (link.dir === 'in' && link.playing === false) {
+      text = 'звук приходит, но браузер его не играет — нажмите «Включить звук голосов»';
+      level = 'bad';
+    } else if (lost >= 8) {
+      text = `${route}, теряется ${lost}% звука — будет хрипеть`;
+      level = 'warn';
+    } else {
+      text = `связь есть, ${route}`;
+      level = 'ok';
+    }
+  }
+  return el(
+    'li',
+    { class: level ? `voice-link is-${level}` : 'voice-link' },
+    el('b', {}, link.dir === 'out' ? `Вы → ${name}` : `${name} → вы`),
+    el('span', {}, text),
+  );
 }
 
 micButtons.toggle.addEventListener('click', toggleMic);
@@ -1044,6 +1111,7 @@ function applyState(snapshot) {
   state.queue = snapshot.queue;
   state.members = snapshot.members;
   chatList.replaceChildren(...snapshot.chat.map(chatNode));
+  recentChat = snapshot.chat.slice(-20);
   requestAnimationFrame(() => (chatList.scrollTop = chatList.scrollHeight));
   renderMembers();
   renderQueue();

@@ -60,7 +60,12 @@ function roomItem(room) {
       el(
         'span',
         { class: 'room-item-main' },
-        el('span', { class: 'room-item-name' }, room.locked ? el('span', { class: 'room-item-lock', title: 'С паролем' }, icon('lock', 14)) : null, room.name),
+        el(
+          'span',
+          { class: 'room-item-name' },
+          room.locked ? el('span', { class: 'room-item-lock', title: 'С паролем' }, icon('lock', 14)) : null,
+          el('span', { class: 'room-item-title' }, room.name),
+        ),
         el('span', { class: 'room-item-sub' }, playing),
       ),
       room.members

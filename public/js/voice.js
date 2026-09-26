@@ -15,6 +15,18 @@ const MIC_ERRORS = {
   NotReadableError: 'Микрофон занят другой программой',
 };
 
+/** «Windows Chrome 140» — для журнала связи: жалобы на звук часто зависят от браузера и системы. */
+function browserName() {
+  const ua = navigator.userAgent;
+  const os = /iPhone|iPad|iPod/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : '?';
+  const browsers = [['Edg', 'Edge'], ['OPR', 'Opera'], ['YaBrowser', 'Яндекс'], ['SamsungBrowser', 'Samsung'], ['FxiOS', 'Firefox'], ['Firefox', 'Firefox'], ['CriOS', 'Chrome'], ['Chrome', 'Chrome'], ['Version', 'Safari']];
+  for (const [token, name] of browsers) {
+    const match = ua.match(new RegExp(`${token}/(\\d+)`));
+    if (match) return `${os} ${name} ${match[1]}`;
+  }
+  return os;
+}
+
 const SPEAKING_LEVEL = 0.04; // уровень входящего звука, выше которого считаем, что человек говорит
 const MAX_RETRIES = 2;
 const DEFAULT_GATE = 0.1;
@@ -34,8 +46,8 @@ export function createVoice({ socket, onChange }) {
   let testing = false;
   let gateThreshold = storage.get('kr_voice_gate', DEFAULT_GATE);
   let gateOpen = false;
-  let gateTimer = null;
-  let lastLoudAt = 0;
+  let gateOpenMs = 0; // сколько порог был открыт — для диагностики
+  let gateChangedAt = 0;
   let micLevelValue = 0;
   let audioBlocked = false;
   let volume = storage.get('kr_voice_volume', 1);
@@ -81,7 +93,9 @@ export function createVoice({ socket, onChange }) {
       if (event.candidate) send(remoteId, dir, { candidate: event.candidate.toJSON() });
     };
     pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'connected') setTimeout(() => refreshLinks(true).catch(() => {}), 3000);
       if (pc.connectionState === 'failed' && peers.get(key) === peer) {
+        sendReport([{ dir, memberId: peer.memberId, state: 'failed' }]);
         closePeer(key);
         // Переподключается говорящий: он и создаёт предложение.
         if (dir === 'out' && localStream && (peer.retries ?? 0) < MAX_RETRIES) {
@@ -144,6 +158,7 @@ export function createVoice({ socket, onChange }) {
     const peer = peers.get(key);
     if (!peer) return;
     if (description?.type === 'answer' && dir === 'out') {
+      peer.memberId ??= memberId; // кому мы говорим — для панели связи
       await peer.pc.setRemoteDescription(description);
       await flushCandidates(peer);
     } else if (candidate) {
@@ -169,49 +184,147 @@ export function createVoice({ socket, onChange }) {
   // После обрыва связи у всех вкладок новые id — старые соединения бесполезны.
   socket.on('disconnect', () => closeAll());
 
-  // --- Микрофон -------------------------------------------------------------
+  // --- Диагностика связи ------------------------------------------------------
+  // Раз в 2 секунды снимаем статистику соединений: панель показывает, с кем связь есть и какая,
+  // а раз в 10 секунд короткая сводка уходит на сервер — в журнал, чтобы разбирать жалобы на звук.
+  let links = [];
+  let statsTick = 0;
+  let gateMark = { at: 0, openMs: 0 };
 
-  function startMeter(stream) {
-    try {
-      const context = new AudioContext();
-      const analyser = context.createAnalyser();
-      analyser.fftSize = 512;
-      context.createMediaStreamSource(stream).connect(analyser);
-      const samples = new Float32Array(analyser.fftSize);
-      meter = {
-        context,
-        level() {
-          analyser.getFloatTimeDomainData(samples);
-          let sum = 0;
-          for (const s of samples) sum += s * s;
-          return Math.min(1, Math.sqrt(sum / samples.length) * 4);
-        },
-      };
-    } catch {
-      meter = null;
+  async function linkInfo(peer) {
+    const info = { dir: peer.dir, memberId: peer.memberId, state: peer.pc.connectionState };
+    const stats = await peer.pc.getStats().catch(() => null);
+    if (!stats) return info;
+    let pair = null;
+    let rtp = null;
+    let remoteRtp = null;
+    stats.forEach((s) => {
+      if (s.type === 'transport' && s.selectedCandidatePairId) pair = stats.get(s.selectedCandidatePairId) ?? pair;
+      if (s.type === 'candidate-pair' && !pair && (s.selected || (s.nominated && s.state === 'succeeded'))) pair = s;
+      if (s.kind === 'audio' && s.type === (peer.dir === 'in' ? 'inbound-rtp' : 'outbound-rtp')) rtp = s;
+      if (s.kind === 'audio' && s.type === 'remote-inbound-rtp') remoteRtp = s;
+    });
+    if (pair) {
+      const local = stats.get(pair.localCandidateId);
+      const remote = stats.get(pair.remoteCandidateId);
+      info.route = local?.candidateType === 'relay' || remote?.candidateType === 'relay' ? 'relay' : 'direct';
+      info.net = `${local?.candidateType ?? '?'}/${remote?.candidateType ?? '?'} ${local?.relayProtocol ?? local?.protocol ?? ''}`.trim();
+      if (Number.isFinite(pair.currentRoundTripTime)) info.rtt = Math.round(pair.currentRoundTripTime * 1000);
     }
+    const prev = peer.prevStats ?? {};
+    if (rtp && peer.dir === 'in') {
+      const received = rtp.packetsReceived ?? 0;
+      const lost = Math.max(0, rtp.packetsLost ?? 0);
+      const concealed = rtp.concealedSamples ?? 0;
+      const samples = rtp.totalSamplesReceived ?? 0;
+      const dReceived = received - (prev.received ?? 0);
+      const dLost = Math.max(0, lost - (prev.lost ?? 0));
+      const dSamples = samples - (prev.samples ?? 0);
+      info.packets = dReceived;
+      info.loss = dReceived + dLost > 0 ? Math.round((100 * dLost) / (dReceived + dLost)) : 0;
+      // Доля звука, который браузеру пришлось «додумать» из-за потерь и опозданий, — это и есть хрип
+      info.conceal = dSamples > 0 ? Math.round((100 * (concealed - (prev.concealed ?? 0))) / dSamples) : 0;
+      info.level = Math.round((rtp.audioLevel ?? 0) * 100) / 100;
+      info.playing = Boolean(peer.audio && !peer.audio.paused);
+      peer.prevStats = { received, lost, concealed, samples };
+    } else if (rtp) {
+      const sent = rtp.packetsSent ?? 0;
+      info.packets = sent - (prev.sent ?? 0);
+      if (Number.isFinite(remoteRtp?.fractionLost)) info.loss = Math.round(remoteRtp.fractionLost * 100);
+      peer.prevStats = { sent };
+    }
+    return info;
   }
+
+  async function refreshLinks(reportNow = false) {
+    if (!peers.size) {
+      if (links.length) {
+        links = [];
+        onChange();
+      }
+      return;
+    }
+    links = await Promise.all([...peers.values()].map(linkInfo));
+    onChange();
+    statsTick += 1;
+    if (reportNow || statsTick % 5 === 0) sendReport(links);
+  }
+  setInterval(() => refreshLinks().catch(() => {}), 2000);
+
+  function sendReport(items) {
+    let mic = null;
+    if (localStream) {
+      const now = performance.now();
+      const openMs = gateOpenMs + (gateOpen ? now - gateChangedAt : 0);
+      const span = gateMark.at ? now - gateMark.at : 0;
+      mic = {
+        meter: meter?.kind ?? 'none',
+        context: meter?.context.state ?? null,
+        threshold: gateThreshold,
+        // доля времени с открытым порогом с прошлой сводки: 0 — слушатели слышат тишину
+        open: span > 0 ? Math.round((100 * (openMs - gateMark.openMs)) / span) : null,
+      };
+      gateMark = { at: now, openMs };
+    }
+    socket.emit('voice:report', { ua: browserName(), live, mic, links: items });
+  }
+
+  // --- Микрофон -------------------------------------------------------------
 
   // Шумовой порог: пока уровень ниже порога, слушателям уходит тишина, а не шум комнаты,
   // и у них не приглушается фильм. Без индикатора (нет AudioContext) порог всегда открыт.
-  function startGate() {
-    gateOpen = false;
-    lastLoudAt = 0;
-    gateTimer = setInterval(() => {
-      micLevelValue = meter ? meter.level() : 1;
-      const now = performance.now();
-      if (micLevelValue >= gateThreshold) lastLoudAt = now;
-      const open = now - lastLoudAt < GATE_HOLD_MS;
-      if (open === gateOpen) return;
-      gateOpen = open;
-      for (const track of localStream?.getAudioTracks() ?? []) track.enabled = open;
-    }, 40);
+  function applyGate(open) {
+    if (open === gateOpen) return;
+    const now = performance.now();
+    if (gateOpen) gateOpenMs += now - gateChangedAt;
+    gateChangedAt = now;
+    gateOpen = open;
+    for (const track of localStream?.getAudioTracks() ?? []) track.enabled = open;
   }
 
-  function stopGate() {
-    clearInterval(gateTimer);
-    gateTimer = null;
-    gateOpen = false;
+  async function startMeter(context, stream) {
+    const source = context.createMediaStreamSource(stream);
+    if (context.audioWorklet && window.AudioWorkletNode) {
+      try {
+        await context.audioWorklet.addModule('/js/voice-meter.worklet.js');
+        const node = new AudioWorkletNode(context, 'voice-meter', { numberOfOutputs: 1, outputChannelCount: [1] });
+        node.port.postMessage({ threshold: gateThreshold, hold: GATE_HOLD_MS / 1000 });
+        node.port.onmessage = ({ data }) => {
+          micLevelValue = data.level;
+          applyGate(data.open);
+        };
+        // Выход узла — тишина; без подключения к выходу браузер узел не обсчитывает
+        source.connect(node).connect(context.destination);
+        return { context, kind: 'worklet', setThreshold: (threshold) => node.port.postMessage({ threshold }) };
+      } catch (err) {
+        console.warn('[voice] AudioWorklet недоступен — уровень по таймеру', err);
+      }
+    }
+    // Запасной путь для старых браузеров: по таймеру, в фоновой вкладке — рывками
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const samples = new Float32Array(analyser.fftSize);
+    let lastLoudAt = 0;
+    const timer = setInterval(() => {
+      analyser.getFloatTimeDomainData(samples);
+      let sum = 0;
+      for (const s of samples) sum += s * s;
+      micLevelValue = Math.min(1, Math.sqrt(sum / samples.length) * 4);
+      const now = performance.now();
+      if (micLevelValue >= gateThreshold) lastLoudAt = now;
+      applyGate(now - lastLoudAt < GATE_HOLD_MS);
+    }, 40);
+    return { context, kind: 'timer', timer, setThreshold() {} };
+  }
+
+  function stopMeter() {
+    if (meter) {
+      clearInterval(meter.timer);
+      meter.context.close().catch(() => {});
+      meter = null;
+    }
+    applyGate(false);
     micLevelValue = 0;
   }
 
@@ -222,16 +335,43 @@ export function createVoice({ socket, onChange }) {
   }
 
   async function openMic() {
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      video: false,
-    });
+    // AudioContext — до первого await, пока ещё идёт нажатие на кнопку: иначе Safari оставит его на паузе
+    let context = null;
+    try {
+      context = new AudioContext();
+      context.resume().catch(() => {});
+    } catch {}
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false,
+      });
+    } catch (err) {
+      context?.close().catch(() => {});
+      throw err;
+    }
+    micStream = stream;
     // Выключать саму дорожку микрофона нельзя: индикатор замолчит, и порог больше не откроется
-    const sendTrack = micStream.getAudioTracks()[0].clone();
+    const sendTrack = stream.getAudioTracks()[0].clone();
     sendTrack.enabled = false;
     localStream = new MediaStream([sendTrack]);
-    startMeter(micStream);
-    startGate();
+    gateOpen = false;
+    gateOpenMs = 0;
+    gateChangedAt = performance.now();
+    gateMark = { at: 0, openMs: 0 };
+    const started = context ? await startMeter(context, stream).catch(() => null) : null;
+    if (micStream !== stream) {
+      // Микрофон выключили, пока подключался индикатор
+      started?.context.close().catch(() => {});
+      return;
+    }
+    meter = started;
+    if (!meter) {
+      context?.close().catch(() => {});
+      micLevelValue = 1;
+      applyGate(true);
+    }
   }
 
   async function start() {
@@ -254,13 +394,11 @@ export function createVoice({ socket, onChange }) {
 
   function stopLocal() {
     closeAll('out');
-    stopGate();
+    stopMeter();
     for (const stream of [localStream, micStream]) stream?.getTracks().forEach((track) => track.stop());
     localStream = null;
     micStream = null;
     live = false;
-    meter?.context.close().catch(() => {});
-    meter = null;
     onChange();
   }
 
@@ -356,6 +494,7 @@ export function createVoice({ socket, onChange }) {
     setGateThreshold(value) {
       gateThreshold = value;
       storage.set('kr_voice_gate', value);
+      meter?.setThreshold(value);
     },
 
     /** id участников, которых сейчас слышно (по уровню входящего звука). */
@@ -371,6 +510,11 @@ export function createVoice({ socket, onChange }) {
 
     connectedCount() {
       return [...peers.values()].filter((peer) => peer.dir === 'out' && peer.pc.connectionState === 'connected').length;
+    },
+
+    /** Состояние каждого голосового соединения: с кем, напрямую или через TURN, потери. */
+    get links() {
+      return links;
     },
   };
 }
