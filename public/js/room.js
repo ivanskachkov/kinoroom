@@ -937,7 +937,18 @@ function voiceLinkView(link) {
   const name = state.members.find((member) => member.id === link.memberId)?.name ?? 'участник';
   let text = 'соединяемся…';
   let level = '';
-  if (link.state === 'failed' || link.state === 'disconnected') {
+  const stuck = link.state === 'new' || link.state === 'connecting';
+  if (stuck && link.age >= 8 && link.localCands === 0) {
+    // Браузер не выдал ни одного сетевого адреса — так делают VPN в браузере и «защита WebRTC»
+    text = 'ваш браузер запрещает прямую связь: выключите VPN в браузере или защиту WebRTC (в Opera: Настройки → Конфиденциальность и безопасность → WebRTC → первый вариант вместо «Отключить непроксированный UDP») и обновите страницу';
+    level = 'bad';
+  } else if (stuck && link.age >= 8 && link.remoteCands === 0) {
+    text = `браузер ${name} запрещает прямую связь: пусть выключит VPN в браузере или защиту WebRTC и обновит страницу`;
+    level = 'bad';
+  } else if (stuck && link.age >= 15) {
+    text = 'напрямую не пробиться — сети обоих не пускают звук, нужен TURN-сервер';
+    level = 'warn';
+  } else if (link.state === 'failed' || link.state === 'disconnected') {
     text = 'не соединились — сеть не пропускает звук напрямую, нужен TURN-сервер';
     level = 'bad';
   } else if (link.state === 'connected') {

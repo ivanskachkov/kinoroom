@@ -27,6 +27,12 @@ function browserName() {
   return os;
 }
 
+const candidateType = (candidate) => / typ (\w+)/.exec(candidate?.candidate ?? '')?.[1] ?? '?';
+const tally = (counts, type) => (counts[type] = (counts[type] ?? 0) + 1);
+const usable = (counts) => Object.entries(counts).reduce((sum, [type, n]) => (type === 'bad' ? sum : sum + n), 0);
+// «h2 s1» — 2 локальных адреса и 1 внешний (через STUN); r — через TURN, b — отвергнутые браузером
+const shortCounts = (counts) => Object.entries(counts).map(([type, n]) => `${type[0]}${n}`).join(' ') || '0';
+
 const SPEAKING_LEVEL = 0.04; // уровень входящего звука, выше которого считаем, что человек говорит
 const MAX_RETRIES = 2;
 const DEFAULT_GATE = 0.1;
@@ -86,11 +92,14 @@ export function createVoice({ socket, onChange }) {
     const key = `${dir}:${remoteId}`;
     closePeer(key);
     const pc = new RTCPeerConnection({ iceServers: await loadIceServers() });
-    const peer = { pc, dir, remoteId, memberId, pending: [], audio: null, receiver: null };
+    // local/remote — сколько сетевых адресов (ICE-кандидатов) каждого типа нашли у себя и получили от собеседника
+    const peer = { pc, dir, remoteId, memberId, pending: [], audio: null, receiver: null, local: {}, remote: {}, createdAt: performance.now() };
     peers.set(key, peer);
 
     pc.onicecandidate = (event) => {
-      if (event.candidate) send(remoteId, dir, { candidate: event.candidate.toJSON() });
+      if (!event.candidate) return;
+      tally(peer.local, event.candidate.type ?? candidateType(event.candidate));
+      send(remoteId, dir, { candidate: event.candidate.toJSON() });
     };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') setTimeout(() => refreshLinks(true).catch(() => {}), 3000);
@@ -138,8 +147,17 @@ export function createVoice({ socket, onChange }) {
     send(remoteId, 'out', { description: peer.pc.localDescription.toJSON() });
   }
 
+  async function addRemoteCandidate(peer, candidate) {
+    try {
+      await peer.pc.addIceCandidate(candidate);
+      tally(peer.remote, candidateType(candidate));
+    } catch {
+      tally(peer.remote, 'bad');
+    }
+  }
+
   async function flushCandidates(peer) {
-    for (const candidate of peer.pending.splice(0)) await peer.pc.addIceCandidate(candidate).catch(() => {});
+    for (const candidate of peer.pending.splice(0)) await addRemoteCandidate(peer, candidate);
   }
 
   async function handleSignal({ from, memberId, pc: remoteDir, description, candidate }) {
@@ -162,7 +180,7 @@ export function createVoice({ socket, onChange }) {
       await peer.pc.setRemoteDescription(description);
       await flushCandidates(peer);
     } else if (candidate) {
-      if (peer.pc.remoteDescription) await peer.pc.addIceCandidate(candidate).catch(() => {});
+      if (peer.pc.remoteDescription) await addRemoteCandidate(peer, candidate);
       else peer.pending.push(candidate);
     }
   }
@@ -192,7 +210,17 @@ export function createVoice({ socket, onChange }) {
   let gateMark = { at: 0, openMs: 0 };
 
   async function linkInfo(peer) {
-    const info = { dir: peer.dir, memberId: peer.memberId, state: peer.pc.connectionState };
+    const info = {
+      dir: peer.dir,
+      memberId: peer.memberId,
+      state: peer.pc.connectionState,
+      age: Math.round((performance.now() - peer.createdAt) / 1000),
+      gathering: peer.pc.iceGatheringState,
+      localCands: usable(peer.local),
+      remoteCands: usable(peer.remote),
+      // пока соединения нет — в журнал вместо типа соединения идёт, сколько адресов есть с каждой стороны
+      net: `свои ${shortCounts(peer.local)} чужие ${shortCounts(peer.remote)}`,
+    };
     const stats = await peer.pc.getStats().catch(() => null);
     if (!stats) return info;
     let pair = null;
