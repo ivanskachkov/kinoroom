@@ -86,7 +86,7 @@ export function createSearch({ sources, onPlay, onQueue }) {
 
   // --- Секции результатов ---------------------------------------------------
 
-  function section(title, load, render, { layout = 'cards', disabled, action = null, empty = 'Ничего не найдено' } = {}) {
+  function section(title, load, render, { layout = 'cards', disabled, action = null, empty = 'Ничего не найдено', note = null } = {}) {
     const count = el('span', { class: 'section-count' });
     const node = el('section', { class: 'search-section' }, el('h3', {}, title, count, action));
     if (!load) {
@@ -97,6 +97,8 @@ export function createSearch({ sources, onPlay, onQueue }) {
     node.append(grid);
     load()
       .then((data) => {
+        const extra = note?.(data);
+        if (extra) node.append(extra);
         const items = render(data);
         if (!items.length) return grid.replaceWith(el('p', { class: 'muted' }, empty));
         count.textContent = items.length;
@@ -113,6 +115,16 @@ export function createSearch({ sources, onPlay, onQueue }) {
     return Array.from({ length: n }, () => el('div', { class: `skeleton skeleton-${layout}` }));
   }
 
+  // Под результатами YouTube — сколько поисков осталось: их 100 в сутки на весь сайт, купить больше нельзя
+  function quotaNote({ quota, cached } = {}) {
+    if (!quota) return null;
+    const time = new Date(quota.resetsAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    const text = cached
+      ? `Из памяти — поиск не потрачен. На сегодня осталось ${quota.left} из ${quota.limit}`
+      : `Поисков YouTube на сегодня осталось ${quota.left} из ${quota.limit}`;
+    return el('p', { class: quota.left <= 10 ? 'quota-note is-low' : 'quota-note' }, `${text}, счётчик обнулится в ${time}.`);
+  }
+
   const NO_FULL_VIDEO = 'Полной версии на YouTube не нашлось — или владелец запретил показывать её на других сайтах, или она недоступна в вашей стране.';
 
   // Раздел YouTube с переключателем «только полные фильмы» (видео длиннее 20 минут, без трейлеров и обзоров)
@@ -122,7 +134,7 @@ export function createSearch({ sources, onPlay, onQueue }) {
       long ? 'YouTube — полные фильмы' : 'YouTube',
       () => api(`/api/search/youtube?q=${enc(q)}${long ? '&long=1' : ''}`, { signal: signal() }),
       (r) => r.results.map(youtubeCard),
-      { action: toggle, empty: long ? NO_FULL_VIDEO : 'Ничего не найдено' },
+      { action: toggle, empty: long ? NO_FULL_VIDEO : 'Ничего не найдено', note: quotaNote },
     );
     toggle.addEventListener('click', () => node.replaceWith(youtubeSection(q, !long)));
     return node;
@@ -366,7 +378,7 @@ export function createSearch({ sources, onPlay, onQueue }) {
         youtubeButton.addEventListener('click', () => {
           youtubeButton.disabled = true;
           const query = `${searchTitle} ${isShow ? 'сериал' : 'фильм'}`;
-          extra.prepend(section(`YouTube — полные видео: «${searchTitle}»`, () => api(`/api/search/youtube?q=${enc(query)}&long=1`, { signal: signal() }), (r) => r.results.map(youtubeCard), { empty: NO_FULL_VIDEO }));
+          extra.prepend(section(`YouTube — полные видео: «${searchTitle}»`, () => api(`/api/search/youtube?q=${enc(query)}&long=1`, { signal: signal() }), (r) => r.results.map(youtubeCard), { empty: NO_FULL_VIDEO, note: quotaNote }));
         });
 
         content.replaceChildren(

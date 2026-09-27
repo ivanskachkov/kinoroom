@@ -8,6 +8,7 @@ import { createSearchRouter } from './lib/search.js';
 import { createLibraryRouter } from './lib/library.js';
 import { attachRooms } from './lib/rooms.js';
 import { createRoomStore } from './lib/store.js';
+import { createYoutubeQuota } from './lib/youtube-quota.js';
 import { buildExtensionZip } from './lib/extension.js';
 import { getIceServers, hasTurn } from './lib/ice.js';
 
@@ -49,7 +50,8 @@ app.get('/api/rooms', (req, res) => {
 app.get('/api/ice', async (req, res) => {
   res.set('cache-control', 'no-store').json({ iceServers: await getIceServers() });
 });
-app.use('/api', createSearchRouter());
+const youtubeQuota = createYoutubeQuota({ dir: config.dataDir, limit: config.youtubeSearchQuota });
+app.use('/api', createSearchRouter({ youtubeQuota }));
 if (config.mediaDir) {
   app.use('/api', createLibraryRouter(config.mediaDir));
   app.use(
@@ -80,6 +82,7 @@ server.listen(config.port, config.host, () => {
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
     rooms.saveAll(); // перезапуск сторожем или обновление не должны сбрасывать позицию
+    youtubeQuota.flush(); // и счётчик поисков YouTube с сохранёнными результатами
     io.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 3000).unref();
   });
